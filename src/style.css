@@ -147,6 +147,51 @@ body {
   background: radial-gradient(ellipse at center, transparent 45%, rgba(200, 0, 20, 0.75) 100%);
 }
 
+#direction-indicators {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+
+/* 中心を軸に回転させ、上側の円弧で方向を示す */
+.indicator {
+  position: absolute;
+  border-radius: 50%;
+  border: 7px solid transparent;
+}
+
+.indicator.damage {
+  left: -110px;
+  top: -110px;
+  width: 220px;
+  height: 220px;
+  border-top-color: rgba(255, 40, 50, 0.95);
+  filter: drop-shadow(0 0 6px rgba(255, 0, 0, 0.8));
+}
+
+.indicator.threat {
+  left: -160px;
+  top: -160px;
+  width: 320px;
+  height: 320px;
+  border-top-color: rgba(255, 150, 30, 0.9);
+  filter: drop-shadow(0 0 6px rgba(255, 120, 0, 0.8));
+}
+
+.indicator.threat::after {
+  content: '▲ 敵襲来';
+  position: absolute;
+  left: 50%;
+  top: -34px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 800;
+  color: #ffb13d;
+}
+
 #top-bar {
   position: absolute;
   top: 16px;

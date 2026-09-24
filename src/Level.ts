@@ -94,6 +94,11 @@ export class Level {
     }
   }
 
+  /** side 方向（単位ベクトル）の壁際にあるスポーン地点 */
+  GetSpawnPointsOnSide(side: THREE.Vector3): THREE.Vector3[] {
+    return this.spawnPoints.filter((point) => (point.x * side.x + point.z * side.z) / point.length() > 0.5);
+  }
+
   /** 壊れた樽を復活させる（近くにいるキャラと重ならないものだけ） */
   RespawnBarrels(blockingPositions: THREE.Vector3[]): void {
     for (const barrel of this.barrels) {
@@ -281,10 +286,11 @@ export class Level {
 
   private BuildSpawnGates(): void {
     const inset = MAP_HALF_SIZE - 2;
-    const points: [number, number][] = [
-      [0, -inset], [0, inset], [-inset, 0], [inset, 0],
-      [-inset + 2, -inset + 2], [inset - 2, inset - 2], [inset - 2, -inset + 2], [-inset + 2, inset - 2],
-    ];
+    // 各辺に 3 つずつ。角には置かず、襲来方向がはっきり分かるようにする
+    const points: [number, number][] = [];
+    for (const offset of [-10, 0, 10]) {
+      points.push([offset, -inset], [offset, inset], [-inset, offset], [inset, offset]);
+    }
     const portalGeometry = new THREE.RingGeometry(0.8, 1.6, 24, 1, 0, Math.PI * 1.6);
     for (const [x, z] of points) {
       this.spawnPoints.push(new THREE.Vector3(x, 0, z));

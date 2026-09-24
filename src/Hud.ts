@@ -33,6 +33,8 @@ export class Hud {
   private readonly bossName = GetElement('boss-name');
   private readonly bossFill = GetElement('boss-fill');
   private readonly slotElements: HTMLElement[] = [];
+  private readonly indicatorContainer = GetElement('direction-indicators');
+  private readonly indicatorElements: HTMLElement[] = [];
 
   private hitMarkerTimer = 0;
   private damageTimer = 0;
@@ -105,6 +107,27 @@ export class Hud {
     }
   }
 
+  /** 画面中央を囲む方向インジケーター（angle は正面 0、時計回りが正のラジアン） */
+  SetIndicators(indicators: { angle: number; opacity: number; kind: string }[]): void {
+    while (this.indicatorElements.length < indicators.length) {
+      const element = document.createElement('div');
+      this.indicatorContainer.appendChild(element);
+      this.indicatorElements.push(element);
+    }
+    for (let i = 0; i < this.indicatorElements.length; i++) {
+      const element = this.indicatorElements[i];
+      const indicator = indicators[i];
+      if (!indicator) {
+        element.style.display = 'none';
+        continue;
+      }
+      element.style.display = '';
+      element.className = `indicator ${indicator.kind}`;
+      element.style.transform = `rotate(${indicator.angle}rad)`;
+      element.style.opacity = `${indicator.opacity}`;
+    }
+  }
+
   ShowHitMarker(isKill: boolean): void {
     this.hitMarker.classList.remove('hidden');
     this.hitMarker.classList.toggle('kill', isKill);
@@ -126,6 +149,7 @@ export class Hud {
     this.notifications.innerHTML = '';
     this.SetBoss(null, 0);
     this.SetPickupPrompt(null);
+    this.SetIndicators([]);
   }
 
   ShowBanner(title: string, subtitle: string, duration = 2.5): void {

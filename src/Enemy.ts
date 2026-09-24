@@ -87,7 +87,13 @@ export interface EnemyContext {
   FireProjectile: (enemy: Enemy, origin: THREE.Vector3, direction: THREE.Vector3) => void;
   MeleePlayer: (enemy: Enemy) => void;
   SummonBats: (enemy: Enemy, count: number) => void;
+  /** 回り込み役の枠を求める。枠の数は制限され、倒されると空く */
+  RequestFlankToken: (enemy: Enemy) => boolean;
 }
+
+/** 見失ってから回り込みを始めるまでの待ち時間 */
+const FLANK_DELAY_MIN = 2.0;
+const FLANK_DELAY_MAX = 3.5;
 
 const tmpDirection = new THREE.Vector3();
 const tmpNavDirection = new THREE.Vector3();
@@ -117,8 +123,12 @@ export class Enemy {
   private fireTimer: number;
   private losTimer = 0;
   private hasLineOfSight = false;
-  private strafeDirection = Math.random() < 0.5 ? -1 : 1;
-  private strafeTimer = 0;
+  private readonly strafePhase = Math.random() * Math.PI * 2;
+  /** 一度でもプレイヤーを視認したか（未交戦の敵はそのまま接近する） */
+  private hasEngaged = false;
+  private lostSightTimer = 0;
+  private flankDelay = FLANK_DELAY_MIN;
+  private isFlanking = false;
   private summonTimer = 6;
   private time = Math.random() * 10;
   private hitPulse = 0;
@@ -204,19 +214,33 @@ export class Enemy {
       if (this.hasLineOfSight && distance < 10) tmpDirection.copy(toPlayerDirection);
       else if (hasNav) tmpDirection.copy(tmpNavDirection);
       if (distance < def.radius + PLAYER_RADIUS + 0.3) speedScale = 0;
-    } else if (!this.hasLineOfSight || distance > def.preferredRange * 1.2) {
+    } else if (this.hasLineOfSight) {
+      // 見えている間は持ち場を守る（遠ければ前進、近すぎれば後退、それ以外は小さく左右に揺れるだけ）
+      this.hasEngaged = true;
+      this.lostSightTimer = 0;
+      if (distance > def.preferredRange * 1.2) {
+        if (hasNav) tmpDirection.copy(tmpNavDirection);
+      } else {
+        const sway = Math.sin(this.time * 1.2 + this.strafePhase);
+        tmpSide.set(-toPlayerDirection.z, 0, toPlayerDirection.x);
+        tmpDirection.copy(tmpSide).multiplyScalar(sway);
+        if (distance < def.preferredRange * 0.5) tmpDirection.addScaledVector(toPlayerDirection, -1);
+        speedScale = 0.35;
+      }
+    } else if (!this.hasEngaged && distance > def.preferredRange) {
+      // 未交戦：射程に入るまではプレイヤーに向かって前進
       if (hasNav) tmpDirection.copy(tmpNavDirection);
     } else {
-      this.strafeTimer -= dt;
-      if (this.strafeTimer <= 0) {
-        this.strafeTimer = 1.5 + Math.random() * 2.5;
-        this.strafeDirection = Math.random() < 0.5 ? -1 : 1;
+      // 射程内なのに見えない＝物陰に隠れている。ここからは回り込み制限の対象
+      this.hasEngaged = true;
+      // 見失った：しばらく様子を見てから、回り込み役の枠を得た敵だけ回り込む
+      // （回り込み役は倒されるまでその役割を持ち続け、他の敵は正面で待機する）
+      if (this.lostSightTimer === 0) this.flankDelay = FLANK_DELAY_MIN + Math.random() * (FLANK_DELAY_MAX - FLANK_DELAY_MIN);
+      this.lostSightTimer += dt;
+      if (this.isFlanking || (this.lostSightTimer >= this.flankDelay && context.RequestFlankToken(this))) {
+        this.isFlanking = true;
+        if (hasNav) tmpDirection.copy(tmpNavDirection);
       }
-      tmpSide.set(-toPlayerDirection.z, 0, toPlayerDirection.x).multiplyScalar(this.strafeDirection);
-      tmpDirection.copy(tmpSide);
-      if (distance < def.preferredRange * 0.5) tmpDirection.addScaledVector(toPlayerDirection, -1);
-      tmpDirection.normalize();
-      speedScale = 0.55;
     }
 
     // 敵同士が重ならないように離す

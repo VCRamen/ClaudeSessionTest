@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import {
   CAMERA_AIM_DISTANCE, CAMERA_DISTANCE, CAMERA_FOV, CAMERA_SHOULDER_OFFSET, HEALTH_PICKUP_AMOUNT,
-  MAX_ALIVE_ENEMIES, PICKUP_RANGE, PLAYER_RADIUS, TOTAL_WAVES, WALK_SPEED,
+  MAP_HALF_SIZE, MAX_ALIVE_ENEMIES, PICKUP_RANGE, PLAYER_RADIUS, TOTAL_WAVES, WALK_SPEED,
 } from './Config';
 import { Input } from './Input';
 import { Sfx } from './Audio';
@@ -61,6 +61,28 @@ const tmpDesired = new THREE.Vector3();
 const tmpLook = new THREE.Vector3();
 const tmpRight = new THREE.Vector3();
 
+/** 敵の襲来方向の候補（北・南・西・東） */
+const SPAWN_SIDES = [
+  new THREE.Vector3(0, 0, -1),
+  new THREE.Vector3(0, 0, 1),
+  new THREE.Vector3(-1, 0, 0),
+  new THREE.Vector3(1, 0, 0),
+];
+/** 回り込み部隊が出現し始める Wave と、その割合 */
+const FLANK_SPAWN_START_WAVE = 4;
+const FLANK_SPAWN_RATIO = 0.2;
+const DAMAGE_INDICATOR_TIME = 1.2;
+const THREAT_INDICATOR_TIME = 5;
+
+type IndicatorKind = 'damage' | 'threat';
+
+interface DirectionIndicator {
+  source: THREE.Vector3;
+  timer: number;
+  duration: number;
+  kind: IndicatorKind;
+}
+
 interface PendingBarrel {
   barrel: Barrel;
   timer: number;
@@ -104,6 +126,10 @@ export class Game {
   private lockRequestTime = 0;
   private lastFrameTime = performance.now();
   private readonly pendingBarrels: PendingBarrel[] = [];
+  private readonly flankers = new Set<Enemy>();
+  private readonly indicators: DirectionIndicator[] = [];
+  private primarySide = SPAWN_SIDES[0];
+  private flankSide = SPAWN_SIDES[2];
   private readonly playerTarget = new THREE.Vector3();
   private readonly playerSegmentBottom = new THREE.Vector3();
   private readonly playerSegmentTop = new THREE.Vector3();
@@ -151,7 +177,14 @@ export class Game {
           def.projectileSize, def.projectileColor, def.projectileHoming);
         this.sfx.PlayEnemyShot();
       },
-      MeleePlayer: (enemy) => this.DamagePlayer(enemy.def.meleeDamage * enemy.damageScale),
+      MeleePlayer: (enemy) => this.DamagePlayer(enemy.def.meleeDamage * enemy.damageScale, enemy.position),
+      RequestFlankToken: (enemy) => {
+        // 回り込める敵の数を制限し、正面と真横から同時に撃たれ続けないようにする
+        const maxFlankers = Math.min(3, 1 + Math.floor(this.wave / 4));
+        if (this.flankers.size >= maxFlankers) return false;
+        this.flankers.add(enemy);
+        return true;
+      },
       SummonBats: (enemy, count) => {
         for (let i = 0; i < count; i++) {
           const angle = Math.random() * Math.PI * 2;
@@ -170,7 +203,7 @@ export class Game {
       playerTarget: this.playerTarget,
       OnHitPlayer: (projectile) => {
         this.effects.SpawnImpact(projectile.position, null, projectile.color, 10);
-        this.DamagePlayer(projectile.damage);
+        this.DamagePlayer(projectile.damage, projectile.origin);
       },
       OnHitCollider: (projectile, hit) => this.OnProjectileHitCollider(projectile, hit),
       OnHitEnemy: (projectile, enemy, point) => {
@@ -334,6 +367,8 @@ export class Game {
     this.projectiles.Clear();
     this.pickups.Clear();
     this.pendingBarrels.length = 0;
+    this.flankers.clear();
+    this.indicators.length = 0;
     this.spawnQueue = [];
     this.level.RespawnBarrels([]);
     this.nav.Rebuild(this.level.colliders);
@@ -348,6 +383,7 @@ export class Game {
     this.level.RespawnBarrels([this.player.position, ...this.enemies.map((enemy) => enemy.position)]);
     this.nav.Rebuild(this.level.colliders);
     this.state = 'playing';
+    this.ChooseSpawnSides();
 
     const hasBoss = this.spawnQueue.includes('boss');
     let subtitle = `${this.spawnQueue.length} 体のモンスターが襲来！`;
@@ -355,6 +391,20 @@ export class Game {
     else if (this.wave === TOTAL_WAVES) subtitle = '最終 Wave';
     this.hud.ShowBanner(`WAVE ${this.wave}`, subtitle);
     this.sfx.PlayWaveStart();
+  }
+
+  /** この Wave の主な襲来方向（プレイヤーから遠い側）と、回り込み部隊の方向を決める */
+  private ChooseSpawnSides(): void {
+    const player = this.player.position;
+    const DistanceToSide = (side: THREE.Vector3) => Math.hypot(side.x * MAP_HALF_SIZE - player.x, side.z * MAP_HALF_SIZE - player.z);
+    const sortedSides = [...SPAWN_SIDES].sort((a, b) => DistanceToSide(b) - DistanceToSide(a));
+    this.primarySide = sortedSides[Math.floor(Math.random() * 2)];
+    const perpendicularSides = SPAWN_SIDES.filter((side) => Math.abs(side.dot(this.primarySide)) < 0.5);
+    perpendicularSides.sort((a, b) => DistanceToSide(b) - DistanceToSide(a));
+    this.flankSide = perpendicularSides[0];
+
+    const indicatorSource = this.primarySide.clone().multiplyScalar(MAP_HALF_SIZE);
+    this.indicators.push({ source: indicatorSource, timer: THREAT_INDICATOR_TIME, duration: THREAT_INDICATOR_TIME, kind: 'threat' });
   }
 
   private OnWaveCleared(): void {
@@ -494,6 +544,7 @@ export class Game {
 
     this.UpdateAvatar(dt);
     this.UpdateCamera(dt);
+    this.UpdateIndicators(dt);
     this.UpdateHud(dt);
   }
 
@@ -690,6 +741,7 @@ export class Game {
     this.scene.remove(enemy.mesh, enemy.healthBar);
     const index = this.enemies.indexOf(enemy);
     if (index >= 0) this.enemies.splice(index, 1);
+    this.flankers.delete(enemy);
 
     if (isBoss) {
       this.effects.SpawnExplosion(tmpCenter, 5);
@@ -764,7 +816,7 @@ export class Game {
 
     if (playerDistance < radius) {
       const selfMultiplier = isFromPlayerWeapon ? 0.4 : 0.7;
-      this.DamagePlayer(damage * (1 - playerDistance / radius) * selfMultiplier);
+      this.DamagePlayer(damage * (1 - playerDistance / radius) * selfMultiplier, center);
     }
   }
 
@@ -787,14 +839,51 @@ export class Game {
     if (hit.collider.barrel) this.DamageBarrel(hit.collider.barrel, projectile.damage);
   }
 
-  private DamagePlayer(amount: number): void {
+  private DamagePlayer(amount: number, source?: THREE.Vector3): void {
     if (this.state !== 'playing' || amount <= 0) return;
     const player = this.player;
     player.hp = Math.max(0, player.hp - amount);
+    if (source) this.AddDamageIndicator(source);
     this.hud.FlashDamage(amount / 30);
     this.sfx.PlayHurt();
     this.cameraShake = Math.min(1.5, this.cameraShake + 0.15);
     if (player.hp <= 0) this.ShowResult(false);
+  }
+
+  private AddDamageIndicator(source: THREE.Vector3): void {
+    // 近い方向からの連続被弾は 1 つにまとめる
+    const existing = this.indicators.find(
+      (indicator) => indicator.kind === 'damage' && Math.hypot(indicator.source.x - source.x, indicator.source.z - source.z) < 3,
+    );
+    if (existing) {
+      existing.source.copy(source);
+      existing.timer = DAMAGE_INDICATOR_TIME;
+      return;
+    }
+    this.indicators.push({ source: source.clone(), timer: DAMAGE_INDICATOR_TIME, duration: DAMAGE_INDICATOR_TIME, kind: 'damage' });
+  }
+
+  private UpdateIndicators(dt: number): void {
+    const player = this.player;
+    const forwardX = -Math.sin(player.yaw);
+    const forwardZ = -Math.cos(player.yaw);
+    const rightX = Math.cos(player.yaw);
+    const rightZ = -Math.sin(player.yaw);
+    const visible: { angle: number; opacity: number; kind: string }[] = [];
+    for (let i = this.indicators.length - 1; i >= 0; i--) {
+      const indicator = this.indicators[i];
+      indicator.timer -= dt;
+      if (indicator.timer <= 0) {
+        this.indicators.splice(i, 1);
+        continue;
+      }
+      const dx = indicator.source.x - player.position.x;
+      const dz = indicator.source.z - player.position.z;
+      const angle = Math.atan2(dx * rightX + dz * rightZ, dx * forwardX + dz * forwardZ);
+      const opacity = Math.min(1, (indicator.timer / indicator.duration) * 2);
+      visible.push({ angle, opacity, kind: indicator.kind });
+    }
+    this.hud.SetIndicators(visible);
   }
 
   // ------------------------------------------------------------
@@ -809,11 +898,15 @@ export class Game {
     if (this.spawnTimer > 0) return;
     this.spawnTimer = Math.max(0.4, 1.6 - this.wave * 0.08);
 
-    const candidates = this.level.spawnPoints.filter((point) => point.distanceTo(this.player.position) > 14);
-    const pool = candidates.length > 0 ? candidates : this.level.spawnPoints;
+    // 基本は主方向のゲートから。中盤以降は一部が横のゲートから回り込んでくる
+    const kind = this.spawnQueue.shift()!;
+    const isFlankSpawn = kind !== 'boss' && this.wave >= FLANK_SPAWN_START_WAVE && Math.random() < FLANK_SPAWN_RATIO;
+    const sidePoints = this.level.GetSpawnPointsOnSide(isFlankSpawn ? this.flankSide : this.primarySide);
+    const farPoints = sidePoints.filter((point) => point.distanceTo(this.player.position) > 14);
+    const fallback = this.level.spawnPoints.filter((point) => point.distanceTo(this.player.position) > 14);
+    const pool = farPoints.length > 0 ? farPoints : fallback.length > 0 ? fallback : this.level.spawnPoints;
     const spawnPoint = pool[Math.floor(Math.random() * pool.length)];
     const position = spawnPoint.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.5, 0, (Math.random() - 0.5) * 1.5));
-    const kind = this.spawnQueue.shift()!;
     this.AddEnemy(kind, position);
     this.effects.SpawnBurst(new THREE.Vector3(position.x, 0.5, position.z), 0x9b30ff, 25, 3);
   }

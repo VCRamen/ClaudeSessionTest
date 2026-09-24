@@ -8,6 +8,8 @@ import { PLAYER_RADIUS } from './Config';
 
 export interface Projectile {
   mesh: THREE.Mesh;
+  /** 発射地点（被弾方向の表示に使う） */
+  origin: THREE.Vector3;
   position: THREE.Vector3;
   velocity: THREE.Vector3;
   damage: number;
@@ -61,6 +63,7 @@ export class ProjectileSystem {
     this.scene.add(mesh);
     this.projectiles.push({
       mesh,
+      origin: origin.clone(),
       position: origin.clone(),
       velocity: direction.clone().multiplyScalar(speed),
       damage,
@@ -80,6 +83,7 @@ export class ProjectileSystem {
     this.scene.add(mesh);
     this.projectiles.push({
       mesh,
+      origin: origin.clone(),
       position: origin.clone(),
       velocity: direction.clone().multiplyScalar(speed),
       damage,
