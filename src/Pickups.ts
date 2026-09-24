@@ -16,7 +16,12 @@ export interface Pickup {
   mesh: THREE.Group;
   life: number;
   spin: number;
+  baseColor: number;
+  glowMaterial: THREE.MeshBasicMaterial;
+  beamMaterial: THREE.MeshBasicMaterial;
 }
+
+const BONUS_COLOR = 0xffd34d;
 
 const ringGeometry = new THREE.RingGeometry(0.45, 0.6, 24);
 const beamGeometry = new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6, 1, true);
@@ -73,12 +78,12 @@ export class PickupManager {
     this.pickups.length = 0;
   }
 
-  /** 最も近い武器ピックアップ（範囲内のみ） */
-  FindNearestWeapon(position: THREE.Vector3, range: number): Pickup | null {
+  /** 最も近い武器ピックアップ（範囲内のみ。IsExcluded が true のものは除く） */
+  FindNearestWeapon(position: THREE.Vector3, range: number, IsExcluded?: (pickup: Pickup) => boolean): Pickup | null {
     let best: Pickup | null = null;
     let bestDistance = range;
     for (const pickup of this.pickups) {
-      if (pickup.kind !== 'weapon') continue;
+      if (pickup.kind !== 'weapon' || IsExcluded?.(pickup)) continue;
       const distance = Math.hypot(pickup.position.x - position.x, pickup.position.z - position.z);
       if (distance < bestDistance) {
         bestDistance = distance;
@@ -88,7 +93,8 @@ export class PickupManager {
     return best;
   }
 
-  Update(dt: number): void {
+  /** IsBonus が true の武器ピックアップは金色に光らせる（拾うと強化ボーナス） */
+  Update(dt: number, IsBonus: (pickup: Pickup) => boolean): void {
     this.time += dt;
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const pickup = this.pickups[i];
@@ -100,6 +106,14 @@ export class PickupManager {
       const content = pickup.mesh.children[0];
       content.rotation.y += dt * 1.8;
       content.position.y = 0.6 + Math.sin(this.time * 3 + pickup.spin) * 0.1;
+      if (pickup.kind === 'weapon') {
+        const isBonus = IsBonus(pickup);
+        const color = isBonus ? BONUS_COLOR : pickup.baseColor;
+        pickup.glowMaterial.color.setHex(color);
+        pickup.beamMaterial.color.setHex(color);
+        const pulse = isBonus ? 1 + Math.sin(this.time * 8 + pickup.spin) * 0.15 : 1;
+        pickup.mesh.children[1].scale.setScalar(pulse);
+      }
       // 消える直前は点滅させる
       pickup.mesh.visible = pickup.life > 5 || Math.floor(pickup.life * 6) % 2 === 0;
     }
@@ -114,14 +128,18 @@ export class PickupManager {
       opacity: 0.6,
       side: THREE.DoubleSide,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      // 色がはっきり見えるよう、加算合成やトーンマッピングは使わない
+      toneMapped: false,
     });
     const ring = new THREE.Mesh(ringGeometry, glowMaterial);
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.04;
     group.add(ring);
+    // 光の柱は半透明にして奥が見えるようにする
+    const beamMaterial = glowMaterial.clone();
+    beamMaterial.opacity = 0.35;
     if (kind === 'weapon') {
-      const beam = new THREE.Mesh(beamGeometry, glowMaterial);
+      const beam = new THREE.Mesh(beamGeometry, beamMaterial);
       beam.position.y = 1.25;
       group.add(beam);
     }
@@ -134,6 +152,9 @@ export class PickupManager {
       mesh: group,
       life: PICKUP_LIFETIME,
       spin: Math.random() * Math.PI * 2,
+      baseColor: color,
+      glowMaterial,
+      beamMaterial,
     });
   }
 }

@@ -177,6 +177,20 @@ export class WeaponInstance {
     this.reserve = Math.min(maxReserve, this.reserve + Math.ceil(maxReserve * ratio));
   }
 
+  /**
+   * 同じ種類の武器を拾ったときのボーナス。
+   * レベルを 1 上げ（拾った武器の方が高ければそのレベルまで）、弾薬を全回復する。
+   * レベルが上がったら true
+   */
+  AbsorbDuplicate(other: WeaponInstance): boolean {
+    const previousLevel = this.level;
+    const targetLevel = Math.min(MAX_WEAPON_LEVEL, Math.max(this.level + 1, other.level));
+    while (this.level < targetLevel) this.Upgrade();
+    this.mag = this.GetMagSize();
+    if (!this.HasInfiniteAmmo()) this.reserve = this.GetMaxReserve();
+    return this.level > previousLevel;
+  }
+
   GetDisplayName(): string {
     return `${this.def.name} Lv${this.level}`;
   }

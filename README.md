@@ -14,6 +14,12 @@ npm run dev      # 開発サーバー（http://localhost:5173）
 npm run build    # dist/ に静的ファイルを出力（GitHub Pages などにそのまま置けます）
 ```
 
+## GitHub Pages で公開する
+
+`.github/workflows/deploy-pages.yml` により、`main` ブランチに push されると自動でビルドして公開します。
+初回だけ、GitHub のリポジトリ画面で **Settings → Pages → Build and deployment → Source** を **GitHub Actions** にしてください。
+公開 URL は `https://<ユーザー名>.github.io/<リポジトリ名>/` です。
+
 ## 操作方法
 
 | キー | 動作 |
@@ -49,6 +55,7 @@ npm run build    # dist/ に静的ファイルを出力（GitHub Pages などに
 
 - 敵の撃破や樽の破壊で武器・回復・弾薬がドロップします。後半の Wave ほど強い武器や強化済みの武器が出やすくなります。
 - 武器スロットは 4 つ。ドロップ武器の近くで 1〜4 キーを押すと、そのスロットに登録します。元の武器はその場に落とします。
+- **すでに持っている武器と同じ種類**のドロップは、金色に光るボーナスアイテムになります。触れるだけで拾い、その武器が 1 レベル強化され、弾薬が全回復します（最大レベルなら弾薬の全回復のみ）。
 
 ### ショップ（Wave 終了時）
 - 敵を倒すとお金が手に入ります。Wave クリア時にはボーナスもあります。

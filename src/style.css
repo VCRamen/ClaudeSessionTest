@@ -400,6 +400,11 @@ body {
   color: var(--heal);
 }
 
+.notification.bonus {
+  color: var(--money);
+  font-weight: 800;
+}
+
 .notification.pickup {
   color: #8fd8ff;
 }

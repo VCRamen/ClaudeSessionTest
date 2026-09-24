@@ -83,6 +83,13 @@ export class Sfx {
     this.Tone(900, 1300, 0.1, 'sine', 0.2, 0.07);
   }
 
+  PlayPowerUp(): void {
+    this.Tone(523, 523, 0.1, 'square', 0.12);
+    this.Tone(659, 659, 0.1, 'square', 0.12, 0.08);
+    this.Tone(784, 784, 0.1, 'square', 0.12, 0.16);
+    this.Tone(1047, 1047, 0.25, 'square', 0.12, 0.24);
+  }
+
   PlayCoin(): void {
     if (!this.Throttle('coin', 0.05)) return;
     this.Tone(1300, 1300, 0.05, 'square', 0.08);

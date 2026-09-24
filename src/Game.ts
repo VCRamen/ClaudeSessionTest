@@ -15,6 +15,7 @@ import { Effects } from './Effects';
 import { ProjectileSystem } from './Projectiles';
 import type { Projectile, ProjectileContext } from './Projectiles';
 import { PickupManager } from './Pickups';
+import type { Pickup } from './Pickups';
 import { PlayerAvatar } from './Avatar';
 import { Player } from './Player';
 import { BuildWaveComposition, Enemy } from './Enemy';
@@ -504,7 +505,8 @@ export class Game {
     const player = this.player;
     const input = this.input;
     const slotKey = input.GetPressedSlotKey();
-    const nearby = this.pickups.FindNearestWeapon(player.position, PICKUP_RANGE);
+    // 所持している武器と同じものは触れるだけで拾う（強化ボーナス）ので、登録の対象外
+    const nearby = this.pickups.FindNearestWeapon(player.position, PICKUP_RANGE, (pickup) => this.IsBonusPickup(pickup));
 
     if (nearby && nearby.weapon) {
       const color = TIER_CSS_COLORS[Math.min(nearby.weapon.def.tier, TIER_CSS_COLORS.length - 1)];
@@ -822,13 +824,41 @@ export class Game {
     this.enemies.push(enemy);
   }
 
+  /** 所持している武器と同じ種類の武器ピックアップか */
+  private IsBonusPickup(pickup: Pickup): boolean {
+    const id = pickup.weapon?.def.id;
+    return id !== undefined && this.player.slots.some((weapon) => weapon?.def.id === id);
+  }
+
+  /** 同じ武器を拾ったときのボーナス：その場で強化 + 弾薬全回復 */
+  private AbsorbDuplicateWeapon(pickup: Pickup): void {
+    const player = this.player;
+    const slotIndex = player.slots.findIndex((weapon) => weapon?.def.id === pickup.weapon!.def.id);
+    const owned = player.slots[slotIndex]!;
+    const wasMaxLevel = owned.IsMaxLevel();
+    const isLevelUp = owned.AbsorbDuplicate(pickup.weapon!);
+    if (slotIndex === player.currentSlot) player.CancelReload();
+    if (isLevelUp) {
+      this.hud.Notify(`⬆ ${owned.GetDisplayName()} に強化！ 弾薬フル補充`, 'bonus');
+      this.hud.ShowBanner('WEAPON UP!', `${owned.GetDisplayName()}`, 1.5);
+      this.sfx.PlayPowerUp();
+    } else {
+      this.hud.Notify(`${owned.def.name}${wasMaxLevel ? '（最大レベル）' : ''} 弾薬フル補充`, 'bonus');
+      this.sfx.PlayPickup();
+    }
+    this.pickups.Remove(pickup);
+  }
+
   private UpdatePickups(dt: number): void {
-    this.pickups.Update(dt);
+    this.pickups.Update(dt, (pickup) => this.IsBonusPickup(pickup));
     const player = this.player;
     for (const pickup of [...this.pickups.pickups]) {
-      if (pickup.kind === 'weapon') continue;
       const distance = Math.hypot(pickup.position.x - player.position.x, pickup.position.z - player.position.z);
       if (distance > 1.0) continue;
+      if (pickup.kind === 'weapon') {
+        if (this.IsBonusPickup(pickup)) this.AbsorbDuplicateWeapon(pickup);
+        continue;
+      }
       if (pickup.kind === 'health') {
         if (player.hp >= player.maxHp) continue;
         player.hp = Math.min(player.maxHp, player.hp + HEALTH_PICKUP_AMOUNT);
