@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Halloween Siege</title>
+  </head>
+  <body>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <div id="crosshair"><span class="line top"></span><span class="line bottom"></span><span class="line left"></span><span class="line right"></span><span class="dot"></span></div>
+      <div id="hit-marker" class="hidden"></div>
+      <div id="scope-overlay" class="hidden"><div class="scope-ring"></div></div>
+      <div id="damage-vignette"></div>
+
+      <div id="top-bar">
+        <div id="wave-info"></div>
+        <div id="enemy-count"></div>
+      </div>
+      <div id="boss-bar" class="hidden">
+        <div id="boss-name"></div>
+        <div class="bar"><div id="boss-fill"></div></div>
+      </div>
+
+      <div id="status-panel">
+        <div class="hp-label">HP <span id="hp-text"></span></div>
+        <div class="hp-bar"><div id="hp-fill"></div></div>
+        <div id="money-text"></div>
+      </div>
+
+      <div id="weapon-panel">
+        <div id="slot-list"></div>
+        <div id="weapon-name"></div>
+        <div id="ammo-text"></div>
+        <div id="reload-bar" class="hidden"><div id="reload-fill"></div><span>RELOADING</span></div>
+      </div>
+
+      <div id="pickup-prompt" class="hidden"></div>
+      <div id="banner" class="hidden"><div id="banner-title"></div><div id="banner-sub"></div></div>
+      <div id="notifications"></div>
+    </div>
+
+    <!-- タイトル -->
+    <div id="title-screen" class="overlay">
+      <div class="panel title-panel">
+        <h1>🎃 HALLOWEEN SIEGE</h1>
+        <p class="subtitle">押し寄せるモンスターを撃退せよ — TPS ウェーブサバイバル</p>
+
+        <section>
+          <h2>1. 主人公モデル（VRM）</h2>
+          <div id="drop-zone">
+            <input id="vrm-file" type="file" accept=".vrm" hidden />
+            <div class="drop-icon">📂</div>
+            <div>ここに <b>.vrm</b> ファイルをドラッグ＆ドロップ<br />またはクリックしてファイルを選択</div>
+          </div>
+          <div id="vrm-status" class="vrm-status">未選択の場合は標準のマネキンで遊べます</div>
+        </section>
+
+        <section>
+          <h2>2. サブ武器を選択</h2>
+          <div class="weapon-choice">
+            <button data-sub-weapon="smg" class="selected">
+              <strong>サブマシンガン</strong><span>連射力が高く扱いやすい</span>
+            </button>
+            <button data-sub-weapon="shotgun">
+              <strong>ショットガン</strong><span>近距離で一撃が重い</span>
+            </button>
+          </div>
+        </section>
+
+        <button id="start-button" class="primary">ゲームスタート</button>
+
+        <details class="controls">
+          <summary>操作方法</summary>
+          <table>
+            <tr><td>WASD</td><td>移動</td></tr>
+            <tr><td>マウス</td><td>視点移動</td></tr>
+            <tr><td>左クリック</td><td>射撃</td></tr>
+            <tr><td>右クリック</td><td>エイム（スナイパーはスコープ）</td></tr>
+            <tr><td>Shift</td><td>ダッシュ</td></tr>
+            <tr><td>C / Ctrl</td><td>しゃがみ（切替 / 押している間）</td></tr>
+            <tr><td>Space</td><td>ジャンプ</td></tr>
+            <tr><td>R</td><td>リロード</td></tr>
+            <tr><td>1〜4</td><td>武器切り替え ／ 落ちている武器の近くでは<b>そのスロットに登録</b></td></tr>
+            <tr><td>ホイール</td><td>隣の武器へ切り替え</td></tr>
+            <tr><td>Esc</td><td>一時停止</td></tr>
+          </table>
+        </details>
+      </div>
+    </div>
+
+    <!-- ポーズ -->
+    <div id="pause-screen" class="overlay hidden">
+      <div class="panel small-panel">
+        <h2>一時停止中</h2>
+        <button id="resume-button" class="primary">クリックして再開</button>
+        <button id="pause-title-button">タイトルへ戻る</button>
+      </div>
+    </div>
+
+    <!-- ショップ -->
+    <div id="shop-screen" class="overlay hidden">
+      <div class="panel shop-panel">
+        <h2 id="shop-title"></h2>
+        <div id="shop-content"></div>
+        <button id="shop-next" class="primary"></button>
+      </div>
+    </div>
+
+    <!-- 結果 -->
+    <div id="result-screen" class="overlay hidden">
+      <div class="panel small-panel">
+        <h2 id="result-heading"></h2>
+        <div id="result-stats"></div>
+        <button id="result-endless" class="primary">エンドレスで続ける</button>
+        <button id="result-retry" class="primary">リトライ</button>
+        <button id="result-title">タイトルへ戻る</button>
+      </div>
+    </div>
+
+    <div id="drop-overlay" class="hidden">VRM ファイルをドロップして読み込み</div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

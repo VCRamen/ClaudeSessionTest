@@ -1,0 +1,716 @@
+:root {
+  --accent: #ff8a1f;
+  --accent-dark: #c25a00;
+  --purple: #9b30ff;
+  --panel: rgba(18, 10, 32, 0.92);
+  --panel-border: rgba(255, 138, 31, 0.35);
+  --text: #f3eefc;
+  --muted: #a99bc4;
+  --danger: #ff3b4a;
+  --heal: #3ddc72;
+  --money: #ffd34d;
+  font-family: 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', Meiryo, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #140c24;
+  color: var(--text);
+  user-select: none;
+}
+
+#game-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------- HUD ---------- */
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+#crosshair {
+  --gap: 8px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+
+#crosshair .line {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 2px #000;
+}
+
+#crosshair .top,
+#crosshair .bottom {
+  width: 2px;
+  height: 9px;
+  left: -1px;
+}
+
+#crosshair .top {
+  bottom: var(--gap);
+}
+
+#crosshair .bottom {
+  top: var(--gap);
+}
+
+#crosshair .left,
+#crosshair .right {
+  width: 9px;
+  height: 2px;
+  top: -1px;
+}
+
+#crosshair .left {
+  right: var(--gap);
+}
+
+#crosshair .right {
+  left: var(--gap);
+}
+
+#crosshair .dot {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  left: -1.5px;
+  top: -1.5px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+#hit-marker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background:
+    linear-gradient(#fff, #fff) center top / 2px 7px no-repeat,
+    linear-gradient(#fff, #fff) center bottom / 2px 7px no-repeat,
+    linear-gradient(#fff, #fff) left center / 7px 2px no-repeat,
+    linear-gradient(#fff, #fff) right center / 7px 2px no-repeat;
+}
+
+#hit-marker.kill {
+  filter: drop-shadow(0 0 3px var(--danger)) hue-rotate(0deg);
+  background:
+    linear-gradient(var(--danger), var(--danger)) center top / 3px 8px no-repeat,
+    linear-gradient(var(--danger), var(--danger)) center bottom / 3px 8px no-repeat,
+    linear-gradient(var(--danger), var(--danger)) left center / 8px 3px no-repeat,
+    linear-gradient(var(--danger), var(--danger)) right center / 8px 3px no-repeat;
+}
+
+#scope-overlay {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, transparent 0, transparent 34vmin, #000 34.5vmin);
+}
+
+#scope-overlay .scope-ring {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.8)) center / 1px 100% no-repeat,
+    linear-gradient(rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.8)) center / 100% 1px no-repeat;
+}
+
+#damage-vignette {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(200, 0, 20, 0.75) 100%);
+}
+
+#top-bar {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+#wave-info {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--accent);
+}
+
+#enemy-count {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+#boss-bar {
+  position: absolute;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, 70vw);
+  text-align: center;
+}
+
+#boss-name {
+  font-weight: 700;
+  color: #ffc400;
+  margin-bottom: 4px;
+}
+
+#boss-bar .bar {
+  height: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.6);
+}
+
+#boss-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff5010, #ffc400);
+  transition: width 0.15s;
+}
+
+#status-panel {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  width: 260px;
+}
+
+.hp-label {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.hp-bar {
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#hp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2fbf5f, #7dff9d);
+  transition: width 0.15s;
+}
+
+#hp-fill.low {
+  background: linear-gradient(90deg, #b3001b, var(--danger));
+}
+
+#money-text {
+  margin-top: 8px;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--money);
+}
+
+#weapon-panel {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  width: 300px;
+  text-align: right;
+}
+
+#slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.45);
+  border-left: 3px solid transparent;
+  opacity: 0.75;
+}
+
+.slot.active {
+  border-left-color: var(--accent);
+  background: rgba(255, 138, 31, 0.2);
+  opacity: 1;
+}
+
+.slot.empty {
+  opacity: 0.4;
+}
+
+.slot .key {
+  display: inline-block;
+  width: 20px;
+  text-align: center;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.slot .name {
+  flex: 1;
+  text-align: left;
+}
+
+.slot .ammo {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+#weapon-name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+#ammo-text {
+  font-size: 34px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+#ammo-text .empty {
+  color: var(--danger);
+}
+
+#reload-bar {
+  position: relative;
+  height: 16px;
+  margin-top: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+#reload-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+#reload-bar span {
+  position: absolute;
+  inset: 0;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  letter-spacing: 2px;
+}
+
+#pickup-prompt {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.pickup-name {
+  font-weight: 800;
+  font-size: 17px;
+}
+
+#banner {
+  position: absolute;
+  top: 26%;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  animation: banner-in 0.35s ease-out;
+}
+
+#banner-title {
+  font-size: 64px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  color: var(--accent);
+  text-shadow: 0 0 20px rgba(255, 110, 0, 0.7), 0 3px 6px #000;
+}
+
+#banner-sub {
+  font-size: 20px;
+  margin-top: 4px;
+}
+
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -20px) scale(1.1);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+#notifications {
+  position: absolute;
+  right: 24px;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.notification {
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+  font-size: 14px;
+  animation: notify-in 0.2s ease-out;
+}
+
+.notification.money {
+  color: var(--money);
+}
+
+.notification.heal {
+  color: var(--heal);
+}
+
+.notification.pickup {
+  color: #8fd8ff;
+}
+
+@keyframes notify-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+
+/* ---------- オーバーレイ ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(10, 4, 20, 0.55);
+  overflow-y: auto;
+}
+
+#title-screen {
+  background: linear-gradient(90deg, rgba(10, 4, 20, 0.92) 0%, rgba(10, 4, 20, 0.6) 55%, transparent 100%);
+  justify-content: flex-start;
+  padding-left: 6vw;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 28px 32px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+
+.title-panel {
+  width: min(520px, 100%);
+}
+
+.title-panel h1 {
+  margin: 0;
+  font-size: 38px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  text-shadow: 0 0 16px rgba(255, 110, 0, 0.5);
+}
+
+.subtitle {
+  margin: 6px 0 20px;
+  color: var(--muted);
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+section {
+  margin-bottom: 20px;
+}
+
+#drop-zone {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px;
+  border: 2px dashed rgba(255, 138, 31, 0.5);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+  line-height: 1.6;
+}
+
+#drop-zone:hover {
+  background: rgba(255, 138, 31, 0.08);
+}
+
+.drop-icon {
+  font-size: 34px;
+}
+
+.vrm-status {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.vrm-status.success {
+  color: var(--heal);
+}
+
+.vrm-status.error {
+  color: var(--danger);
+}
+
+.weapon-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.weapon-choice button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 12px 14px;
+}
+
+.weapon-choice button span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.weapon-choice button.selected {
+  border-color: var(--accent);
+  background: rgba(255, 138, 31, 0.18);
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+button.primary {
+  width: 100%;
+  background: linear-gradient(180deg, var(--accent), var(--accent-dark));
+  border-color: transparent;
+  font-weight: 800;
+  font-size: 18px;
+  padding: 14px;
+  letter-spacing: 1px;
+}
+
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--accent), var(--accent-dark));
+  filter: brightness(1.1);
+}
+
+.controls {
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.controls summary {
+  cursor: pointer;
+}
+
+.controls table {
+  margin-top: 8px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.controls td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.controls td:first-child {
+  white-space: nowrap;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.small-panel {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+
+.small-panel h2 {
+  font-size: 30px;
+  color: var(--accent);
+}
+
+#result-screen.victory h2 {
+  color: var(--money);
+}
+
+#result-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+
+#result-stats div {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.shop-panel {
+  width: min(620px, 100%);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+.shop-panel h2 {
+  font-size: 28px;
+  color: var(--accent);
+}
+
+#shop-content {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  padding-right: 4px;
+}
+
+.shop-status {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 12px;
+  font-size: 16px;
+}
+
+.shop-status .money {
+  color: var(--money);
+}
+
+.shop-section h3 {
+  margin: 12px 0 6px;
+  font-size: 14px;
+  color: var(--muted);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 4px;
+}
+
+.shop-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+}
+
+.shop-item-text {
+  flex: 1;
+}
+
+.shop-item-name {
+  font-weight: 700;
+}
+
+.shop-item-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.shop-item button {
+  min-width: 90px;
+  color: var(--money);
+  font-weight: 700;
+}
+
+#drop-overlay {
+  position: fixed;
+  inset: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 4px dashed var(--accent);
+  border-radius: 16px;
+  background: rgba(20, 8, 40, 0.8);
+  font-size: 28px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  #title-screen {
+    justify-content: center;
+    padding-left: 16px;
+  }
+
+  #status-panel {
+    width: 180px;
+  }
+
+  #weapon-panel {
+    width: 220px;
+  }
+
+  #banner-title {
+    font-size: 40px;
+  }
+}

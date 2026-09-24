@@ -1,0 +1,407 @@
+// プレイヤーの見た目（VRM またはマネキン）と、コードで生成する簡易モーション
+
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import type { VRM, VRMHumanBoneName } from '@pixiv/three-vrm';
+import { BuildGunMesh } from './WeaponModels';
+import type { WeaponId } from './Weapons';
+
+export interface AvatarPoseState {
+  forwardSpeed: number;
+  rightSpeed: number;
+  isCrouching: boolean;
+  isAiming: boolean;
+  isSprinting: boolean;
+  isGrounded: boolean;
+  aimPitch: number;
+  /** 0〜1 のリロード進行度。リロード中でなければ -1 */
+  reloadProgress: number;
+  recoil: number;
+}
+
+const TARGET_HEIGHT_MIN = 1.2;
+const TARGET_HEIGHT_MAX = 2.3;
+const DEFAULT_HEIGHT = 1.65;
+
+interface Rig {
+  hips: THREE.Object3D | null;
+  spine: THREE.Object3D | null;
+  chest: THREE.Object3D | null;
+  upperChest: THREE.Object3D | null;
+  neck: THREE.Object3D | null;
+  head: THREE.Object3D | null;
+  leftUpperArm: THREE.Object3D | null;
+  leftLowerArm: THREE.Object3D | null;
+  leftHand: THREE.Object3D | null;
+  rightUpperArm: THREE.Object3D | null;
+  rightLowerArm: THREE.Object3D | null;
+  rightHand: THREE.Object3D | null;
+  leftUpperLeg: THREE.Object3D | null;
+  leftLowerLeg: THREE.Object3D | null;
+  leftFoot: THREE.Object3D | null;
+  rightUpperLeg: THREE.Object3D | null;
+  rightLowerLeg: THREE.Object3D | null;
+  rightFoot: THREE.Object3D | null;
+}
+
+export class PlayerAvatar {
+  /** プレイヤーの足元に置き、Y 回転で向きを表す（モデルは +Z が正面） */
+  readonly root = new THREE.Group();
+
+  private readonly modelHolder = new THREE.Group();
+  private readonly gunPivot = new THREE.Group();
+  private gunMesh: THREE.Group | null = null;
+  private muzzle: THREE.Object3D | null = null;
+  private currentWeaponId: WeaponId | null = null;
+
+  private vrm: VRM | null = null;
+  private rig: Rig | null = null;
+  private mannequin: Mannequin;
+  private hipsRestPosition = new THREE.Vector3();
+  private shoulderHeight = 1.4;
+  private modelScale = 1;
+
+  private walkPhase = 0;
+  private crouchAmount = 0;
+  private airAmount = 0;
+  private moveAmount = 0;
+  private smoothedForward = 0;
+  private smoothedRight = 0;
+  private time = 0;
+
+  constructor() {
+    this.root.add(this.modelHolder);
+    this.root.add(this.gunPivot);
+    this.mannequin = new Mannequin();
+    this.modelHolder.add(this.mannequin.group);
+    this.shoulderHeight = this.mannequin.shoulderHeight;
+  }
+
+  HasVrm(): boolean {
+    return this.vrm !== null;
+  }
+
+  async LoadVrmFromFile(file: File): Promise<string> {
+    const url = URL.createObjectURL(file);
+    try {
+      const loader = new GLTFLoader();
+      loader.register((parser) => new VRMLoaderPlugin(parser));
+      const gltf = await loader.loadAsync(url);
+      const vrm = gltf.userData.vrm as VRM | undefined;
+      if (!vrm) throw new Error('VRM データが見つかりませんでした');
+
+      VRMUtils.removeUnnecessaryVertices(gltf.scene);
+      VRMUtils.combineSkeletons(gltf.scene);
+      VRMUtils.rotateVRM0(vrm);
+      vrm.scene.traverse((object) => {
+        object.frustumCulled = false;
+        if ((object as THREE.Mesh).isMesh) {
+          object.castShadow = true;
+        }
+      });
+
+      this.SetVrm(vrm);
+      const meta = vrm.meta as unknown as { name?: string; title?: string };
+      return meta.name ?? meta.title ?? file.name;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  SetWeapon(id: WeaponId | null): void {
+    if (id === this.currentWeaponId) return;
+    this.currentWeaponId = id;
+    if (this.gunMesh) {
+      this.gunPivot.remove(this.gunMesh);
+      this.gunMesh = null;
+      this.muzzle = null;
+    }
+    if (!id) return;
+    this.gunMesh = BuildGunMesh(id);
+    this.gunMesh.position.set(0, -0.08, 0.38);
+    this.gunPivot.add(this.gunMesh);
+    this.muzzle = this.gunMesh.getObjectByName('muzzle') ?? null;
+  }
+
+  GetMuzzleWorldPosition(out: THREE.Vector3): THREE.Vector3 {
+    if (this.muzzle) return this.muzzle.getWorldPosition(out);
+    return this.gunPivot.getWorldPosition(out);
+  }
+
+  Update(dt: number, state: AvatarPoseState): void {
+    this.time += dt;
+    const blend = 1 - Math.exp(-dt * 12);
+    this.crouchAmount += ((state.isCrouching ? 1 : 0) - this.crouchAmount) * blend;
+    this.airAmount += ((state.isGrounded ? 0 : 1) - this.airAmount) * blend;
+    this.smoothedForward += (state.forwardSpeed - this.smoothedForward) * blend;
+    this.smoothedRight += (state.rightSpeed - this.smoothedRight) * blend;
+    const speed = Math.hypot(this.smoothedForward, this.smoothedRight);
+    this.moveAmount = Math.min(1, speed / 4.5);
+    if (state.isGrounded) {
+      this.walkPhase += dt * (4 + speed * 1.3) * (speed > 0.2 ? 1 : 0);
+    }
+
+    const crouchDrop = this.crouchAmount * this.GetCrouchDropHeight();
+    // 銃はしゃがみに合わせて下げ、エイム方向に向ける
+    this.gunPivot.position.set(-0.14 * this.modelScale, this.shoulderHeight - crouchDrop - 0.08, 0.05);
+    this.gunPivot.rotation.set(-state.aimPitch - state.recoil * 2, 0, 0);
+    if (state.reloadProgress >= 0) {
+      const reloadTilt = Math.sin(state.reloadProgress * Math.PI);
+      this.gunPivot.rotation.x += reloadTilt * 0.6;
+      this.gunPivot.rotation.z = reloadTilt * 0.5;
+    }
+
+    if (this.vrm && this.rig) {
+      this.PoseVrm(state);
+      this.vrm.update(dt);
+    } else {
+      this.mannequin.Pose(state, this.walkPhase, this.moveAmount, this.crouchAmount, this.airAmount,
+        this.smoothedForward, this.smoothedRight);
+    }
+  }
+
+  private SetVrm(vrm: VRM): void {
+    if (this.vrm) {
+      this.modelHolder.remove(this.vrm.scene);
+      VRMUtils.deepDispose(this.vrm.scene);
+    }
+    this.mannequin.group.visible = false;
+    this.vrm = vrm;
+    this.modelHolder.add(vrm.scene);
+
+    const humanoid = vrm.humanoid;
+    const GetBone = (name: VRMHumanBoneName) => humanoid.getNormalizedBoneNode(name);
+    this.rig = {
+      hips: GetBone('hips'),
+      spine: GetBone('spine'),
+      chest: GetBone('chest'),
+      upperChest: GetBone('upperChest'),
+      neck: GetBone('neck'),
+      head: GetBone('head'),
+      leftUpperArm: GetBone('leftUpperArm'),
+      leftLowerArm: GetBone('leftLowerArm'),
+      leftHand: GetBone('leftHand'),
+      rightUpperArm: GetBone('rightUpperArm'),
+      rightLowerArm: GetBone('rightLowerArm'),
+      rightHand: GetBone('rightHand'),
+      leftUpperLeg: GetBone('leftUpperLeg'),
+      leftLowerLeg: GetBone('leftLowerLeg'),
+      leftFoot: GetBone('leftFoot'),
+      rightUpperLeg: GetBone('rightUpperLeg'),
+      rightLowerLeg: GetBone('rightLowerLeg'),
+      rightFoot: GetBone('rightFoot'),
+    };
+    humanoid.resetNormalizedPose();
+    vrm.update(0);
+    if (this.rig.hips) this.hipsRestPosition.copy(this.rig.hips.position);
+
+    // 身長を測って極端なサイズなら補正する
+    this.modelHolder.scale.setScalar(1);
+    this.root.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(vrm.scene);
+    const height = bounds.max.y - bounds.min.y;
+    this.modelScale = height < TARGET_HEIGHT_MIN || height > TARGET_HEIGHT_MAX ? DEFAULT_HEIGHT / height : 1;
+    this.modelHolder.scale.setScalar(this.modelScale);
+    this.root.updateMatrixWorld(true);
+
+    const shoulder = this.rig.rightUpperArm ?? this.rig.upperChest ?? this.rig.chest;
+    if (shoulder) {
+      const position = new THREE.Vector3();
+      shoulder.getWorldPosition(position);
+      this.root.worldToLocal(position);
+      this.shoulderHeight = position.y;
+    } else {
+      this.shoulderHeight = 1.4 * this.modelScale;
+    }
+  }
+
+  /** しゃがんだときに腰（＝上半身）が下がる量 */
+  private GetCrouchDropHeight(): number {
+    if (this.vrm) return this.hipsRestPosition.y * 0.3 * this.modelScale;
+    return 0.38;
+  }
+
+  /** VRM の正規化ボーンを直接回してポーズを作る（モデルは +Z が正面） */
+  private PoseVrm(state: AvatarPoseState): void {
+    const rig = this.rig!;
+    const crouch = this.crouchAmount;
+    const air = this.airAmount;
+    const move = this.moveAmount * (1 - air);
+    const speed = Math.max(0.01, Math.hypot(this.smoothedForward, this.smoothedRight));
+    const forwardRatio = this.smoothedForward / speed;
+    const rightRatio = this.smoothedRight / speed;
+    const swing = Math.sin(this.walkPhase);
+    const swingCos = Math.cos(this.walkPhase);
+    const stride = move * (state.isSprinting ? 0.8 : 0.55) * (1 - crouch * 0.4);
+
+    // 腰
+    if (rig.hips) {
+      const hipsDrop = crouch * this.hipsRestPosition.y * 0.3;
+      const bob = Math.abs(swingCos) * 0.03 * move;
+      rig.hips.position.set(
+        this.hipsRestPosition.x,
+        this.hipsRestPosition.y - hipsDrop - bob,
+        this.hipsRestPosition.z,
+      );
+      rig.hips.rotation.set(0, 0, 0);
+    }
+
+    // 脚：前後の振り（負の X 回転で脚が前に出る）
+    const legBaseX = -crouch * 1.0 - air * 0.5;
+    const kneeBase = crouch * 1.7 + air * 0.9;
+    const strafeSwing = swing * stride * rightRatio * 0.5;
+    SetRotation(rig.leftUpperLeg, legBaseX - swing * stride * forwardRatio, 0, -strafeSwing);
+    SetRotation(rig.rightUpperLeg, legBaseX + swing * stride * forwardRatio, 0, -strafeSwing);
+    SetRotation(rig.leftLowerLeg, kneeBase + Math.max(0, -swingCos) * stride * 1.4, 0, 0);
+    SetRotation(rig.rightLowerLeg, kneeBase + Math.max(0, swingCos) * stride * 1.4, 0, 0);
+    SetRotation(rig.leftFoot, -crouch * 0.6, 0, 0);
+    SetRotation(rig.rightFoot, -crouch * 0.6, 0, 0);
+
+    // 上半身：エイムの上下に合わせて反らす
+    const pitch = state.aimPitch;
+    const lean = crouch * 0.3 + (state.isSprinting ? 0.15 : 0);
+    SetRotation(rig.spine, lean - pitch * 0.3, 0.12, 0);
+    SetRotation(rig.chest, -pitch * 0.35, 0.1, 0);
+    SetRotation(rig.upperChest, -pitch * 0.2, 0.05, 0);
+    SetRotation(rig.neck, -pitch * 0.1, -0.12, 0);
+    SetRotation(rig.head, -pitch * 0.1 - lean * 0.5, -0.12, 0);
+
+    // 腕：銃を両手で前に構える
+    const reload = state.reloadProgress >= 0 ? Math.sin(state.reloadProgress * Math.PI) : 0;
+    const recoil = state.recoil * 3;
+    SetRotation(rig.rightUpperArm, -recoil, 1.25, 0.35);
+    SetRotation(rig.rightLowerArm, 0, 0.35, 0);
+    SetRotation(rig.rightHand, 0, 0, 0);
+    SetRotation(rig.leftUpperArm, -recoil + reload * 0.5, -1.15, -0.4 - reload * 0.4);
+    SetRotation(rig.leftLowerArm, 0, -1.0 + reload * 0.6, 0);
+    SetRotation(rig.leftHand, 0, 0, 0);
+  }
+}
+
+function SetRotation(bone: THREE.Object3D | null, x: number, y: number, z: number): void {
+  if (bone) bone.rotation.set(x, y, z);
+}
+
+/** VRM 未読み込み時に表示する簡易マネキン */
+class Mannequin {
+  readonly group = new THREE.Group();
+  readonly shoulderHeight = 1.4;
+
+  private readonly pelvis = new THREE.Group();
+  private readonly torso = new THREE.Group();
+  private readonly head = new THREE.Group();
+  private readonly leftLeg: LimbPivot;
+  private readonly rightLeg: LimbPivot;
+  private readonly leftArm = new THREE.Group();
+  private readonly rightArm = new THREE.Group();
+
+  constructor() {
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x3d5a80, roughness: 0.6 });
+    const jointMaterial = new THREE.MeshStandardMaterial({ color: 0x98c1d9, roughness: 0.5 });
+    const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xe0c3a8, roughness: 0.7 });
+
+    this.pelvis.position.y = 0.95;
+    this.group.add(this.pelvis);
+
+    const hipMesh = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.16, 0.2), bodyMaterial);
+    hipMesh.castShadow = true;
+    this.pelvis.add(hipMesh);
+
+    this.torso.position.y = 0.05;
+    this.pelvis.add(this.torso);
+    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.22), bodyMaterial);
+    chest.position.y = 0.3;
+    chest.castShadow = true;
+    this.torso.add(chest);
+
+    this.head.position.y = 0.62;
+    this.torso.add(this.head);
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12), skinMaterial);
+    headMesh.position.y = 0.12;
+    headMesh.castShadow = true;
+    this.head.add(headMesh);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.05), jointMaterial);
+    visor.position.set(0, 0.14, 0.11);
+    this.head.add(visor);
+
+    // 腕は前方（+Z）へ伸ばした状態で作る
+    for (const [arm, side] of [[this.leftArm, 1], [this.rightArm, -1]] as const) {
+      arm.position.set(0.24 * side, 0.5, 0);
+      this.torso.add(arm);
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.5), jointMaterial);
+      upper.position.z = 0.22;
+      upper.castShadow = true;
+      arm.add(upper);
+    }
+    this.leftArm.rotation.set(0.1, -0.5, 0);
+    this.rightArm.rotation.set(0.15, 0.25, 0);
+
+    this.leftLeg = new LimbPivot(bodyMaterial, jointMaterial);
+    this.leftLeg.root.position.set(0.1, 0, 0);
+    this.pelvis.add(this.leftLeg.root);
+    this.rightLeg = new LimbPivot(bodyMaterial, jointMaterial);
+    this.rightLeg.root.position.set(-0.1, 0, 0);
+    this.pelvis.add(this.rightLeg.root);
+  }
+
+  Pose(
+    state: AvatarPoseState,
+    walkPhase: number,
+    moveAmount: number,
+    crouch: number,
+    air: number,
+    forwardSpeed: number,
+    rightSpeed: number,
+  ): void {
+    const speed = Math.max(0.01, Math.hypot(forwardSpeed, rightSpeed));
+    const forwardRatio = forwardSpeed / speed;
+    const rightRatio = rightSpeed / speed;
+    const move = moveAmount * (1 - air);
+    const stride = move * (state.isSprinting ? 0.8 : 0.55);
+    const swing = Math.sin(walkPhase);
+    const swingCos = Math.cos(walkPhase);
+
+    this.pelvis.position.y = 0.95 - crouch * 0.38 - Math.abs(swingCos) * 0.03 * move;
+    const legBase = -crouch * 1.1 - air * 0.5;
+    const kneeBase = crouch * 1.9 + air * 0.9;
+    this.leftLeg.Set(legBase - swing * stride * forwardRatio, -swing * stride * rightRatio * 0.5,
+      kneeBase + Math.max(0, -swingCos) * stride * 1.4);
+    this.rightLeg.Set(legBase + swing * stride * forwardRatio, -swing * stride * rightRatio * 0.5,
+      kneeBase + Math.max(0, swingCos) * stride * 1.4);
+
+    this.torso.rotation.set(crouch * 0.3 - state.aimPitch * 0.4, 0, 0);
+    this.head.rotation.set(-state.aimPitch * 0.3, 0, 0);
+    const armPitch = -state.aimPitch * 0.6 + state.recoil * -3;
+    const reload = state.reloadProgress >= 0 ? Math.sin(state.reloadProgress * Math.PI) : 0;
+    this.rightArm.rotation.set(0.15 + armPitch, 0.25, 0);
+    this.leftArm.rotation.set(0.1 + armPitch + reload * 0.8, -0.5 + reload * 0.3, 0);
+  }
+}
+
+class LimbPivot {
+  readonly root = new THREE.Group();
+  private readonly knee = new THREE.Group();
+
+  constructor(upperMaterial: THREE.Material, lowerMaterial: THREE.Material) {
+    const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.45, 0.14), upperMaterial);
+    thigh.position.y = -0.22;
+    thigh.castShadow = true;
+    this.root.add(thigh);
+    this.knee.position.y = -0.45;
+    this.root.add(this.knee);
+    const shin = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.45, 0.12), lowerMaterial);
+    shin.position.y = -0.24;
+    shin.castShadow = true;
+    this.knee.add(shin);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.06, 0.22), upperMaterial);
+    foot.position.set(0, -0.47, 0.05);
+    foot.castShadow = true;
+    this.knee.add(foot);
+  }
+
+  Set(hipPitch: number, hipRoll: number, kneePitch: number): void {
+    this.root.rotation.set(hipPitch, 0, hipRoll);
+    this.knee.rotation.set(kneePitch, 0, 0);
+  }
+}
