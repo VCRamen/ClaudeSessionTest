@@ -20,9 +20,13 @@ export interface AvatarPoseState {
   recoil: number;
 }
 
-const TARGET_HEIGHT_MIN = 1.2;
-const TARGET_HEIGHT_MAX = 2.3;
+/** マネキンの Head ボーン相当（首の付け根）の高さ。VRM はこの高さに Head ボーンが来るよう拡大縮小する */
+const MANNEQUIN_HEAD_BONE_HEIGHT = 1.62;
 const DEFAULT_HEIGHT = 1.65;
+/** 手の位置に対する銃の位置（グリップを握っているように見える位置） */
+const GUN_OFFSET_IN_HAND = new THREE.Vector3(0, 0.05, 0.03);
+
+const tmpHandPosition = new THREE.Vector3();
 
 interface Rig {
   hips: THREE.Object3D | null;
@@ -59,7 +63,6 @@ export class PlayerAvatar {
   private rig: Rig | null = null;
   private mannequin: Mannequin;
   private hipsRestPosition = new THREE.Vector3();
-  private shoulderHeight = 1.4;
   private modelScale = 1;
 
   private walkPhase = 0;
@@ -75,7 +78,6 @@ export class PlayerAvatar {
     this.root.add(this.gunPivot);
     this.mannequin = new Mannequin();
     this.modelHolder.add(this.mannequin.group);
-    this.shoulderHeight = this.mannequin.shoulderHeight;
   }
 
   HasVrm(): boolean {
@@ -119,7 +121,7 @@ export class PlayerAvatar {
     }
     if (!id) return;
     this.gunMesh = BuildGunMesh(id);
-    this.gunMesh.position.set(0, -0.08, 0.38);
+    this.gunMesh.position.copy(GUN_OFFSET_IN_HAND);
     this.gunPivot.add(this.gunMesh);
     this.muzzle = this.gunMesh.getObjectByName('muzzle') ?? null;
   }
@@ -142,22 +144,28 @@ export class PlayerAvatar {
       this.walkPhase += dt * (4 + speed * 1.3) * (speed > 0.2 ? 1 : 0);
     }
 
-    const crouchDrop = this.crouchAmount * this.GetCrouchDropHeight();
-    // 銃はしゃがみに合わせて下げ、エイム方向に向ける
-    this.gunPivot.position.set(-0.14 * this.modelScale, this.shoulderHeight - crouchDrop - 0.08, 0.05);
-    this.gunPivot.rotation.set(-state.aimPitch - state.recoil * 2, 0, 0);
-    if (state.reloadProgress >= 0) {
-      const reloadTilt = Math.sin(state.reloadProgress * Math.PI);
-      this.gunPivot.rotation.x += reloadTilt * 0.6;
-      this.gunPivot.rotation.z = reloadTilt * 0.5;
-    }
-
     if (this.vrm && this.rig) {
       this.PoseVrm(state);
       this.vrm.update(dt);
     } else {
       this.mannequin.Pose(state, this.walkPhase, this.moveAmount, this.crouchAmount, this.airAmount,
         this.smoothedForward, this.smoothedRight);
+    }
+    this.AttachGunToHand(state);
+  }
+
+  /** ポーズ後の右手の位置に銃を置き、エイム方向に向ける */
+  private AttachGunToHand(state: AvatarPoseState): void {
+    const hand = this.rig?.rightHand ?? this.mannequin.rightHandAnchor;
+    this.root.updateMatrixWorld(true);
+    hand.getWorldPosition(tmpHandPosition);
+    this.root.worldToLocal(tmpHandPosition);
+    this.gunPivot.position.copy(tmpHandPosition);
+    this.gunPivot.rotation.set(-state.aimPitch - state.recoil * 2, 0, 0);
+    if (state.reloadProgress >= 0) {
+      const reloadTilt = Math.sin(state.reloadProgress * Math.PI);
+      this.gunPivot.rotation.x += reloadTilt * 0.6;
+      this.gunPivot.rotation.z = reloadTilt * 0.5;
     }
   }
 
@@ -196,30 +204,22 @@ export class PlayerAvatar {
     vrm.update(0);
     if (this.rig.hips) this.hipsRestPosition.copy(this.rig.hips.position);
 
-    // 身長を測って極端なサイズなら補正する
+    // Head ボーンの高さがマネキンの頭の位置と揃うように拡大縮小する
     this.modelHolder.scale.setScalar(1);
     this.root.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(vrm.scene);
-    const height = bounds.max.y - bounds.min.y;
-    this.modelScale = height < TARGET_HEIGHT_MIN || height > TARGET_HEIGHT_MAX ? DEFAULT_HEIGHT / height : 1;
+    const headPosition = new THREE.Vector3();
+    if (this.rig.head) {
+      this.rig.head.getWorldPosition(headPosition);
+      this.root.worldToLocal(headPosition);
+    }
+    if (headPosition.y > 0.1) {
+      this.modelScale = MANNEQUIN_HEAD_BONE_HEIGHT / headPosition.y;
+    } else {
+      const bounds = new THREE.Box3().setFromObject(vrm.scene);
+      this.modelScale = DEFAULT_HEIGHT / Math.max(0.1, bounds.max.y - bounds.min.y);
+    }
     this.modelHolder.scale.setScalar(this.modelScale);
     this.root.updateMatrixWorld(true);
-
-    const shoulder = this.rig.rightUpperArm ?? this.rig.upperChest ?? this.rig.chest;
-    if (shoulder) {
-      const position = new THREE.Vector3();
-      shoulder.getWorldPosition(position);
-      this.root.worldToLocal(position);
-      this.shoulderHeight = position.y;
-    } else {
-      this.shoulderHeight = 1.4 * this.modelScale;
-    }
-  }
-
-  /** しゃがんだときに腰（＝上半身）が下がる量 */
-  private GetCrouchDropHeight(): number {
-    if (this.vrm) return this.hipsRestPosition.y * 0.3 * this.modelScale;
-    return 0.38;
   }
 
   /** VRM の正規化ボーンを直接回してポーズを作る（モデルは +Z が正面） */
@@ -286,7 +286,8 @@ function SetRotation(bone: THREE.Object3D | null, x: number, y: number, z: numbe
 /** VRM 未読み込み時に表示する簡易マネキン */
 class Mannequin {
   readonly group = new THREE.Group();
-  readonly shoulderHeight = 1.4;
+  /** 右手の位置（銃を持たせる場所） */
+  readonly rightHandAnchor = new THREE.Object3D();
 
   private readonly pelvis = new THREE.Group();
   private readonly torso = new THREE.Group();
@@ -334,6 +335,8 @@ class Mannequin {
       upper.castShadow = true;
       arm.add(upper);
     }
+    this.rightHandAnchor.position.set(0, 0, 0.47);
+    this.rightArm.add(this.rightHandAnchor);
     this.leftArm.rotation.set(0.1, -0.5, 0);
     this.rightArm.rotation.set(0.15, 0.25, 0);
 

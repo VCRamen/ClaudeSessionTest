@@ -94,6 +94,9 @@ export interface EnemyContext {
 /** 見失ってから回り込みを始めるまでの待ち時間 */
 const FLANK_DELAY_MIN = 2.0;
 const FLANK_DELAY_MAX = 3.5;
+/** コウモリが噛みついた後に離れている時間 */
+const BAT_RETREAT_TIME_MIN = 2.0;
+const BAT_RETREAT_TIME_MAX = 3.0;
 
 const tmpDirection = new THREE.Vector3();
 const tmpNavDirection = new THREE.Vector3();
@@ -124,6 +127,9 @@ export class Enemy {
   private losTimer = 0;
   private hasLineOfSight = false;
   private readonly strafePhase = Math.random() * Math.PI * 2;
+  /** コウモリが攻撃後に離れている残り時間 */
+  private retreatTimer = 0;
+  private retreatSide = 1;
   /** 一度でもプレイヤーを視認したか（未交戦の敵はそのまま接近する） */
   private hasEngaged = false;
   private lostSightTimer = 0;
@@ -211,9 +217,17 @@ export class Enemy {
     const toPlayerDirection = tmpTarget.set(toPlayerX, 0, toPlayerZ).normalize();
     let speedScale = 1;
     if (def.kind === 'bat') {
-      if (this.hasLineOfSight && distance < 10) tmpDirection.copy(toPlayerDirection);
-      else if (hasNav) tmpDirection.copy(tmpNavDirection);
-      if (distance < def.radius + PLAYER_RADIUS + 0.3) speedScale = 0;
+      this.retreatTimer = Math.max(0, this.retreatTimer - dt);
+      if (this.retreatTimer > 0) {
+        // 噛みついた後は一度離れる（斜め後ろへ）
+        tmpSide.set(-toPlayerDirection.z, 0, toPlayerDirection.x).multiplyScalar(this.retreatSide * 0.6);
+        tmpDirection.copy(toPlayerDirection).multiplyScalar(-1).add(tmpSide).normalize();
+        speedScale = 0.8;
+      } else {
+        if (this.hasLineOfSight && distance < 10) tmpDirection.copy(toPlayerDirection);
+        else if (hasNav) tmpDirection.copy(tmpNavDirection);
+        if (distance < def.radius + PLAYER_RADIUS + 0.3) speedScale = 0;
+      }
     } else if (this.hasLineOfSight) {
       // 見えている間は持ち場を守る（遠ければ前進、近すぎれば後退、それ以外は小さく左右に揺れるだけ）
       this.hasEngaged = true;
@@ -302,17 +316,23 @@ export class Enemy {
     }
 
     if (def.meleeDamage > 0) {
-      if (distance < def.radius + PLAYER_RADIUS + 0.6 && this.fireTimer <= 0) {
+      if (this.retreatTimer <= 0 && distance < def.radius + PLAYER_RADIUS + 0.6 && this.fireTimer <= 0) {
         this.fireTimer = def.fireIntervalMin + Math.random() * (def.fireIntervalMax - def.fireIntervalMin);
         context.MeleePlayer(this);
+        // ヒット＆アウェイ：一度離れてから、しばらくして再び襲ってくる
+        this.retreatTimer = BAT_RETREAT_TIME_MIN + Math.random() * (BAT_RETREAT_TIME_MAX - BAT_RETREAT_TIME_MIN);
+        this.retreatSide = Math.random() < 0.5 ? -1 : 1;
       }
       return;
     }
 
     if (this.fireTimer > 0 || !this.hasLineOfSight || distance > 40) return;
+    // 視線チェックは間引いているので、撃つ直前にもう一度確かめる（隠れた直後に撃たれないように）
+    this.GetEyePosition(tmpEye);
+    this.hasLineOfSight = HasLineOfSight(tmpEye, context.playerTarget, context.colliders);
+    if (!this.hasLineOfSight) return;
     this.fireTimer = def.fireIntervalMin + Math.random() * (def.fireIntervalMax - def.fireIntervalMin);
 
-    this.GetEyePosition(tmpEye);
     // 距離に応じて狙いをばらつかせる（動き回れば避けられる）
     const inaccuracy = 0.4 + distance * 0.05;
     tmpTarget.set(

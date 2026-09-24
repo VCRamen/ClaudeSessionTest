@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import {
   CAMERA_AIM_DISTANCE, CAMERA_DISTANCE, CAMERA_FOV, CAMERA_SHOULDER_OFFSET, HEALTH_PICKUP_AMOUNT,
-  MAP_HALF_SIZE, MAX_ALIVE_ENEMIES, PICKUP_RANGE, PLAYER_RADIUS, TOTAL_WAVES, WALK_SPEED,
+  MAP_HALF_SIZE, MAX_ALIVE_ENEMIES, PICKUP_RANGE, PLAYER_HIT_RADIUS, TOTAL_WAVES, WALK_SPEED,
 } from './Config';
 import { Input } from './Input';
 import { Sfx } from './Audio';
@@ -426,6 +426,7 @@ export class Game {
 
   private ShowResult(isVictory: boolean): void {
     this.state = 'result';
+    this.hud.SetPickupPrompt(null);
     this.input.ExitLock();
     const screen = document.getElementById('result-screen')!;
     document.getElementById('result-heading')!.textContent = isVictory ? 'ALL WAVES CLEAR!' : 'GAME OVER';
@@ -505,8 +506,9 @@ export class Game {
 
     player.UpdateMovement(dt, this.input, this.level.colliders);
     player.GetTargetPosition(this.playerTarget);
-    this.playerSegmentBottom.set(player.position.x, player.position.y + PLAYER_RADIUS, player.position.z);
-    this.playerSegmentTop.set(player.position.x, player.position.y + player.GetHeight() - PLAYER_RADIUS, player.position.z);
+    // 当たり判定の上端がちょうど身長になるカプセル（しゃがめば低い遮蔽物の陰に収まる）
+    this.playerSegmentBottom.set(player.position.x, player.position.y + PLAYER_HIT_RADIUS, player.position.z);
+    this.playerSegmentTop.set(player.position.x, player.position.y + player.GetHeight() - PLAYER_HIT_RADIUS, player.position.z);
 
     this.fireBufferTimer = this.input.isLeftPressed ? FIRE_BUFFER_TIME : Math.max(0, this.fireBufferTimer - dt);
     this.HandleWeaponInput();
@@ -571,6 +573,7 @@ export class Game {
         const previous = player.AssignWeapon(slotKey, weapon);
         if (previous) this.pickups.SpawnWeapon(dropPosition, previous);
         player.SwitchToSlot(slotKey);
+        this.hud.SetPickupPrompt(null);
         this.hud.Notify(`${weapon.GetDisplayName()} をスロット ${slotKey + 1} に登録`, 'pickup');
         this.sfx.PlayPickup();
       }

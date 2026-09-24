@@ -5,7 +5,9 @@ export const TOTAL_WAVES = 10;
 
 export const PLAYER_RADIUS = 0.35;
 export const PLAYER_HEIGHT = 1.7;
-export const PLAYER_CROUCH_HEIGHT = 1.1;
+export const PLAYER_CROUCH_HEIGHT = 1.0;
+/** 敵の弾に対するプレイヤーの当たり判定の半径（移動用の半径より少し細い） */
+export const PLAYER_HIT_RADIUS = 0.3;
 export const PLAYER_MAX_HP = 100;
 export const PLAYER_START_MONEY = 0;
 

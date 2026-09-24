@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { DistancePointToSegment, IntersectRaySphere, RaycastColliders } from './Collision';
 import type { Collider, ColliderHit } from './Collision';
 import type { Enemy } from './Enemy';
-import { PLAYER_RADIUS } from './Config';
+import { PLAYER_HIT_RADIUS } from './Config';
 
 export interface Projectile {
   mesh: THREE.Mesh;
@@ -38,9 +38,11 @@ const rocketGeometry = new THREE.CylinderGeometry(0.06, 0.06, 0.45, 8);
 rocketGeometry.rotateX(Math.PI / 2);
 const rocketMaterial = new THREE.MeshStandardMaterial({ color: 0x556b2f, emissive: 0x331100 });
 
+/** この水平距離より近づいた追尾弾は直進する */
+const HOMING_STOP_DISTANCE = 5;
+
 const tmpDirection = new THREE.Vector3();
 const tmpCenter = new THREE.Vector3();
-const tmpDesired = new THREE.Vector3();
 
 export class ProjectileSystem {
   private readonly scene: THREE.Scene;
@@ -111,10 +113,23 @@ export class ProjectileSystem {
       }
 
       if (projectile.homing > 0) {
-        const speed = projectile.velocity.length();
-        tmpDesired.subVectors(context.playerTarget, projectile.position).normalize().multiplyScalar(speed);
-        projectile.velocity.lerp(tmpDesired, Math.min(1, projectile.homing * dt));
-        projectile.velocity.setLength(speed);
+        // 追尾は水平方向のみ。近づいたら追尾をやめる（壁の裏へ回り込んで当たらないように）
+        const dx = context.playerTarget.x - projectile.position.x;
+        const dz = context.playerTarget.z - projectile.position.z;
+        const horizontalDistance = Math.hypot(dx, dz);
+        if (horizontalDistance > HOMING_STOP_DISTANCE) {
+          const horizontalSpeed = Math.hypot(projectile.velocity.x, projectile.velocity.z);
+          const blend = Math.min(1, projectile.homing * dt);
+          const desiredX = (dx / horizontalDistance) * horizontalSpeed;
+          const desiredZ = (dz / horizontalDistance) * horizontalSpeed;
+          projectile.velocity.x += (desiredX - projectile.velocity.x) * blend;
+          projectile.velocity.z += (desiredZ - projectile.velocity.z) * blend;
+          const newHorizontalSpeed = Math.hypot(projectile.velocity.x, projectile.velocity.z);
+          if (newHorizontalSpeed > 1e-4) {
+            projectile.velocity.x *= horizontalSpeed / newHorizontalSpeed;
+            projectile.velocity.z *= horizontalSpeed / newHorizontalSpeed;
+          }
+        }
       }
 
       const stepLength = projectile.velocity.length() * dt;
@@ -146,7 +161,8 @@ export class ProjectileSystem {
       } else {
         const nextPosition = tmpCenter.copy(projectile.position).addScaledVector(tmpDirection, Math.min(stepLength, hitDistance));
         const distance = DistancePointToSegment(nextPosition, context.playerSegmentBottom, context.playerSegmentTop);
-        if (distance < PLAYER_RADIUS + projectile.radius) {
+        // 弾の見た目の大きさは判定に少しだけ加える（壁の縁をかすめた弾が当たらないように）
+        if (distance < PLAYER_HIT_RADIUS + projectile.radius * 0.3) {
           context.OnHitPlayer(projectile);
           this.Remove(i);
           continue;
