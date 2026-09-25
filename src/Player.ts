@@ -166,12 +166,9 @@ export class Player {
       : this.coverT <= this.cover.minT + COVER_EDGE_DISTANCE;
   }
 
-  /** キャラクターモデルの向き（Y 回転）。低いカバーでは遮蔽物の方を向き、高い壁には背をつける */
+  /** キャラクターモデルの向き（Y 回転）。張り付き中は壁や遮蔽物に背をつける */
   GetAvatarYaw(): number {
-    if (this.cover && !this.isPoppedOut) {
-      const normal = this.cover.normal;
-      return this.cover.isLow ? Math.atan2(-normal.x, -normal.z) : Math.atan2(normal.x, normal.z);
-    }
+    if (this.cover && !this.isPoppedOut) return Math.atan2(this.cover.normal.x, this.cover.normal.z);
     return this.yaw + Math.PI;
   }
 
@@ -179,9 +176,9 @@ export class Player {
   private StartCoverCameraAssist(): void {
     const cover = this.cover;
     if (!cover) return;
-    // 低いカバー：遮蔽物越しに前を見る。高い壁：壁に沿って、身を乗り出す側を見る
-    const lookX = cover.isLow ? -cover.normal.x : cover.tangent.x * this.coverSide * 0.9 + cover.normal.x * 0.45;
-    const lookZ = cover.isLow ? -cover.normal.z : cover.tangent.z * this.coverSide * 0.9 + cover.normal.z * 0.45;
+    // キャラクターの前（壁から離れた側）から、壁と身を乗り出す側を斜めに見る。キャラクターの前面が映る
+    const lookX = -cover.normal.x * 0.75 + cover.tangent.x * this.coverSide * 0.65;
+    const lookZ = -cover.normal.z * 0.75 + cover.tangent.z * this.coverSide * 0.65;
     this.cameraAssistYaw = Math.atan2(-lookX, -lookZ);
     this.cameraAssistTimer = 0.5;
   }
@@ -346,8 +343,8 @@ export class Player {
     const isMoving = !this.isPoppedOut && Math.abs(along) > 0.2;
     if (isMoving) {
       const newSide = along > 0 ? 1 : -1;
-      // 高い壁で向きを変えたら、カメラも反対側へ向け直す
-      if (newSide !== this.coverSide && !cover.isLow) {
+      // 向きを変えたら、カメラも反対側へ向け直す
+      if (newSide !== this.coverSide) {
         this.coverSide = newSide;
         this.StartCoverCameraAssist();
       }

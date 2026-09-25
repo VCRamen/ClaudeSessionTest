@@ -27,13 +27,36 @@ export interface AvatarPoseState {
 /** 腕の骨が向いている方向（VRM の正規化ボーンの T ポーズ基準） */
 const RIGHT_ARM_REST_DIRECTION = new THREE.Vector3(-1, 0, 0);
 const LEFT_ARM_REST_DIRECTION = new THREE.Vector3(1, 0, 0);
-/** 張り付きポーズの腕の向き（モデル空間：+Z が正面、+X が左） */
-const COVER_RIGHT_UPPER_ARM = new THREE.Vector3(-0.2, -0.95, 0.25).normalize();
-const COVER_RIGHT_LOWER_ARM = new THREE.Vector3(0.35, 0.6, 0.7).normalize();
-const COVER_LEFT_UPPER_ARM = new THREE.Vector3(0.2, -0.95, 0.25).normalize();
-const COVER_LEFT_LOWER_ARM = new THREE.Vector3(-0.45, 0.55, 0.7).normalize();
-/** 張り付き中は銃口を上に向けて胸元で構える */
-const COVER_GUN_PITCH = -1.25;
+interface CoverArmPose {
+  rightUpper: THREE.Vector3;
+  rightLower: THREE.Vector3;
+  leftUpper: THREE.Vector3;
+  leftLower: THREE.Vector3;
+  /** 銃の向き（X：上下、Y：左右） */
+  gunPitch: number;
+  gunYaw: number;
+}
+
+/**
+ * 張り付きポーズの腕の向き（モデル空間：+Z が正面、+X がキャラクターの左）
+ * 高い壁：銃を顔の横で上に向け、両手で持つ。低い遮蔽物：しゃがんで銃を体の前で斜めに抱える
+ */
+const HIGH_COVER_ARMS: CoverArmPose = {
+  rightUpper: new THREE.Vector3(-0.3, -0.8, 0.5).normalize(),
+  rightLower: new THREE.Vector3(0.2, 0.9, 0.35).normalize(),
+  leftUpper: new THREE.Vector3(0.25, -0.85, 0.45).normalize(),
+  leftLower: new THREE.Vector3(-0.75, 0.35, 0.55).normalize(),
+  gunPitch: -1.45,
+  gunYaw: 0,
+};
+const LOW_COVER_ARMS: CoverArmPose = {
+  rightUpper: new THREE.Vector3(-0.35, -0.9, 0.2).normalize(),
+  rightLower: new THREE.Vector3(0.45, 0.35, 0.8).normalize(),
+  leftUpper: new THREE.Vector3(0.25, -0.8, 0.5).normalize(),
+  leftLower: new THREE.Vector3(-0.35, 0.65, 0.65).normalize(),
+  gunPitch: -0.9,
+  gunYaw: 0.6,
+};
 
 const tmpDirection = new THREE.Vector3();
 const tmpInverse = new THREE.Quaternion();
@@ -91,6 +114,8 @@ export class PlayerAvatar {
   private currentWeaponId: WeaponId | null = null;
 
   private vrm: VRM | null = null;
+  /** VRM 0.x のモデルか（ボーンの向きの扱いが 1.0 と違う） */
+  private isVrm0 = false;
   private rig: Rig | null = null;
   private mannequin: Mannequin;
   private hipsRestPosition = new THREE.Vector3();
@@ -98,6 +123,8 @@ export class PlayerAvatar {
 
   private walkPhase = 0;
   private crouchAmount = 0;
+  /** 低い遮蔽物の陰で深くしゃがむ度合い（0〜1） */
+  private squatAmount = 0;
   private airAmount = 0;
   private moveAmount = 0;
   private smoothedForward = 0;
@@ -166,6 +193,7 @@ export class PlayerAvatar {
     this.time += dt;
     const blend = 1 - Math.exp(-dt * 12);
     this.crouchAmount += ((state.isCrouching ? 1 : 0) - this.crouchAmount) * blend;
+    this.squatAmount += ((state.isCoverPose && state.isCrouching ? 1 : 0) - this.squatAmount) * blend;
     this.airAmount += ((state.isGrounded ? 0 : 1) - this.airAmount) * blend;
     this.smoothedForward += (state.forwardSpeed - this.smoothedForward) * blend;
     this.smoothedRight += (state.rightSpeed - this.smoothedRight) * blend;
@@ -179,7 +207,7 @@ export class PlayerAvatar {
       this.PoseVrm(state);
       this.vrm.update(dt);
     } else {
-      this.mannequin.Pose(state, this.walkPhase, this.moveAmount, this.crouchAmount, this.airAmount,
+      this.mannequin.Pose(state, this.walkPhase, this.moveAmount, this.crouchAmount, this.squatAmount, this.airAmount,
         this.smoothedForward, this.smoothedRight);
     }
     this.AttachGunToHand(state);
@@ -192,7 +220,12 @@ export class PlayerAvatar {
     hand.getWorldPosition(tmpHandPosition);
     this.root.worldToLocal(tmpHandPosition);
     this.gunPivot.position.copy(tmpHandPosition);
-    this.gunPivot.rotation.set(state.isCoverPose ? COVER_GUN_PITCH : -state.aimPitch - state.recoil * 2, 0, 0);
+    if (state.isCoverPose) {
+      const arms = state.isCrouching ? LOW_COVER_ARMS : HIGH_COVER_ARMS;
+      this.gunPivot.rotation.set(arms.gunPitch, arms.gunYaw, 0);
+    } else {
+      this.gunPivot.rotation.set(-state.aimPitch - state.recoil * 2, 0, 0);
+    }
     if (state.reloadProgress >= 0) {
       const reloadTilt = Math.sin(state.reloadProgress * Math.PI);
       this.gunPivot.rotation.x += reloadTilt * 0.6;
@@ -207,6 +240,7 @@ export class PlayerAvatar {
     }
     this.mannequin.group.visible = false;
     this.vrm = vrm;
+    this.isVrm0 = (vrm.meta as unknown as { metaVersion?: string }).metaVersion === '0';
     this.modelHolder.add(vrm.scene);
 
     const humanoid = vrm.humanoid;
@@ -268,7 +302,7 @@ export class PlayerAvatar {
 
     // 腰
     if (rig.hips) {
-      const hipsDrop = crouch * this.hipsRestPosition.y * 0.3;
+      const hipsDrop = (crouch * 0.3 + this.squatAmount * 0.38) * this.hipsRestPosition.y;
       const bob = Math.abs(swingCos) * 0.03 * move;
       rig.hips.position.set(
         this.hipsRestPosition.x,
@@ -279,15 +313,20 @@ export class PlayerAvatar {
     }
 
     // 脚：前後の振り（負の X 回転で脚が前に出る）
-    const legBaseX = -crouch * 1.0 - air * 0.5;
-    const kneeBase = crouch * 1.7 + air * 0.9;
+    // 低い遮蔽物の陰では膝を開いて深くしゃがむ
+    const squat = this.squatAmount;
+    const legBaseX = -crouch * 1.0 - squat * 0.6 - air * 0.5;
+    const kneeBase = crouch * 1.7 + squat * 0.8 + air * 0.9;
+    const kneeSpread = squat * 0.18;
     const strafeSwing = swing * stride * rightRatio * 0.5;
-    SetRotation(rig.leftUpperLeg, legBaseX - swing * stride * forwardRatio, 0, -strafeSwing);
-    SetRotation(rig.rightUpperLeg, legBaseX + swing * stride * forwardRatio, 0, -strafeSwing);
+    SetRotation(rig.leftUpperLeg, legBaseX - swing * stride * forwardRatio, 0, -strafeSwing + kneeSpread);
+    SetRotation(rig.rightUpperLeg, legBaseX + swing * stride * forwardRatio, 0, -strafeSwing - kneeSpread);
     SetRotation(rig.leftLowerLeg, kneeBase + Math.max(0, -swingCos) * stride * 1.4, 0, 0);
     SetRotation(rig.rightLowerLeg, kneeBase + Math.max(0, swingCos) * stride * 1.4, 0, 0);
-    SetRotation(rig.leftFoot, -crouch * 0.6, 0, 0);
-    SetRotation(rig.rightFoot, -crouch * 0.6, 0, 0);
+    // 足の裏が地面と平行になるように、太ももとすねの角度を打ち消す
+    const footX = -(legBaseX + kneeBase) * (1 - air);
+    SetRotation(rig.leftFoot, footX, 0, 0);
+    SetRotation(rig.rightFoot, footX, 0, 0);
 
     // 上半身：エイムの上下に合わせて反らす
     const pitch = state.aimPitch;
@@ -309,22 +348,36 @@ export class PlayerAvatar {
     SetRotation(rig.leftHand, 0, 0, 0);
 
     if (state.isCoverPose) this.PoseVrmCover(state);
+    if (this.isVrm0) this.ConvertPoseToVrm0();
   }
 
-  /** 壁に背をつけ、銃を胸元で上に向けて構えるポーズ */
+  /** 壁に背をつけるポーズ（高い壁は立って銃を顔の横に、低い遮蔽物はしゃがんで銃を斜めに抱える） */
   private PoseVrmCover(state: AvatarPoseState): void {
     const rig = this.rig!;
     const crouch = this.crouchAmount;
     const look = state.coverLook;
-    SetRotation(rig.spine, -0.05 + crouch * 0.2, 0, 0);
-    SetRotation(rig.chest, 0, look * 0.1, 0);
+    const arms = state.isCrouching ? LOW_COVER_ARMS : HIGH_COVER_ARMS;
+    SetRotation(rig.spine, -0.08 + crouch * 0.25, 0, 0);
+    SetRotation(rig.chest, 0, look * 0.15, 0);
     SetRotation(rig.upperChest, 0, 0, 0);
     SetRotation(rig.neck, 0, look * 0.35, 0);
-    SetRotation(rig.head, 0.05, look * 0.55, 0);
-    PointBone(rig.rightUpperArm, RIGHT_ARM_REST_DIRECTION, COVER_RIGHT_UPPER_ARM);
-    PointLowerArm(rig.rightUpperArm, rig.rightLowerArm, RIGHT_ARM_REST_DIRECTION, COVER_RIGHT_LOWER_ARM);
-    PointBone(rig.leftUpperArm, LEFT_ARM_REST_DIRECTION, COVER_LEFT_UPPER_ARM);
-    PointLowerArm(rig.leftUpperArm, rig.leftLowerArm, LEFT_ARM_REST_DIRECTION, COVER_LEFT_LOWER_ARM);
+    SetRotation(rig.head, 0.05, look * 0.6, look * -0.08);
+    PointBone(rig.rightUpperArm, RIGHT_ARM_REST_DIRECTION, arms.rightUpper);
+    PointLowerArm(rig.rightUpperArm, rig.rightLowerArm, RIGHT_ARM_REST_DIRECTION, arms.rightLower);
+    PointBone(rig.leftUpperArm, LEFT_ARM_REST_DIRECTION, arms.leftUpper);
+    PointLowerArm(rig.leftUpperArm, rig.leftLowerArm, LEFT_ARM_REST_DIRECTION, arms.leftLower);
+  }
+
+  /**
+   * ポーズは VRM 1.0 の向き（+Z が正面）で作っている。VRM 0.x の正規化ボーンはモデル本来の向き（-Z が正面）の
+   * ままなので、Y 軸まわりに 180 度回した座標系へ変換する（クォータニオンの X と Z の符号を反転）
+   */
+  private ConvertPoseToVrm0(): void {
+    for (const bone of Object.values(this.rig!)) {
+      if (!bone) continue;
+      const q = bone.quaternion;
+      q.set(-q.x, q.y, -q.z, q.w);
+    }
   }
 }
 
@@ -402,6 +455,7 @@ class Mannequin {
     walkPhase: number,
     moveAmount: number,
     crouch: number,
+    squat: number,
     air: number,
     forwardSpeed: number,
     rightSpeed: number,
@@ -414,9 +468,9 @@ class Mannequin {
     const swing = Math.sin(walkPhase);
     const swingCos = Math.cos(walkPhase);
 
-    this.pelvis.position.y = 0.95 - crouch * 0.38 - Math.abs(swingCos) * 0.03 * move;
-    const legBase = -crouch * 1.1 - air * 0.5;
-    const kneeBase = crouch * 1.9 + air * 0.9;
+    this.pelvis.position.y = 0.95 - crouch * 0.38 - squat * 0.3 - Math.abs(swingCos) * 0.03 * move;
+    const legBase = -crouch * 1.1 - squat * 0.55 - air * 0.5;
+    const kneeBase = crouch * 1.9 + squat * 0.7 + air * 0.9;
     this.leftLeg.Set(legBase - swing * stride * forwardRatio, -swing * stride * rightRatio * 0.5,
       kneeBase + Math.max(0, -swingCos) * stride * 1.4);
     this.rightLeg.Set(legBase + swing * stride * forwardRatio, -swing * stride * rightRatio * 0.5,
@@ -429,11 +483,16 @@ class Mannequin {
     this.rightArm.rotation.set(0.15 + armPitch, 0.25, 0);
     this.leftArm.rotation.set(0.1 + armPitch + reload * 0.8, -0.5 + reload * 0.3, 0);
     if (state.isCoverPose) {
-      // 壁に背をつけ、銃を胸元に引き寄せて顔を横に向ける
-      this.torso.rotation.set(crouch * 0.25, state.coverLook * 0.1, 0);
+      // 壁に背をつけて顔を横に向ける。高い壁は銃を顔の横に、低い遮蔽物は体の前に構える
+      this.torso.rotation.set(crouch * 0.25 - 0.05, state.coverLook * 0.15, 0);
       this.head.rotation.set(0, state.coverLook * 0.8, 0);
-      this.rightArm.rotation.set(0.9, 0.35, 0);
-      this.leftArm.rotation.set(0.9, -0.55, 0);
+      if (state.isCrouching) {
+        this.rightArm.rotation.set(0.7, 0.3, 0);
+        this.leftArm.rotation.set(0.3, -0.6, 0);
+      } else {
+        this.rightArm.rotation.set(-0.7, 0.2, 0);
+        this.leftArm.rotation.set(-0.2, -0.7, 0);
+      }
     }
   }
 }

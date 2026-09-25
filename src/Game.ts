@@ -48,8 +48,6 @@ const EXPLOSIVE_BARREL_DAMAGE = 90;
 const MAX_AIM_DISTANCE = 200;
 const LOCK_GRACE_TIME = 0.6;
 const COVER_CAMERA_DISTANCE = 2.3;
-/** 低いカバーに隠れている間の銃の向き（下向きに構える） */
-const LOW_COVER_GUN_PITCH = -0.55;
 const COVER_CAMERA_SHOULDER_OFFSET = 0.8;
 /** 張り付き中、カメラの中心を壁から離す距離 */
 const COVER_CAMERA_PUSH = 0.5;
@@ -1043,9 +1041,8 @@ export class Game {
     this.avatar.root.rotation.y = player.GetAvatarYaw();
     this.avatar.root.visible = !this.IsScoped();
     this.avatar.SetWeapon(player.GetCurrentWeapon()?.def.id ?? null);
-    // 高い壁：背をつけるポーズ。低いカバー：遮蔽物の方を向いてしゃがみ、銃を下げて構える
-    const isHidingInCover = player.IsInCover() && !player.isPoppedOut;
-    const isCoverPose = isHidingInCover && !player.cover!.isLow;
+    // 張り付き中は壁や遮蔽物に背をつけるポーズ（低い遮蔽物ではしゃがむ）
+    const isCoverPose = player.IsInCover() && !player.isPoppedOut;
     this.avatar.Update(dt, {
       forwardSpeed: player.localForwardSpeed,
       rightSpeed: player.localRightSpeed,
@@ -1053,7 +1050,7 @@ export class Game {
       isAiming: player.isAiming,
       isSprinting: player.isSprinting,
       isGrounded: player.isGrounded,
-      aimPitch: isCoverPose ? 0 : isHidingInCover ? LOW_COVER_GUN_PITCH : player.pitch,
+      aimPitch: isCoverPose ? 0 : player.pitch,
       reloadProgress: player.GetReloadProgress(),
       recoil: this.recoilAnimation,
       isCoverPose,
@@ -1077,7 +1074,7 @@ export class Game {
     const isWallPose = cover !== null && !player.isPoppedOut;
     const targetDistance = isScoped ? 0.1 : player.isAiming ? CAMERA_AIM_DISTANCE : isWallPose ? COVER_CAMERA_DISTANCE : CAMERA_DISTANCE;
     this.cameraDistance += (targetDistance - this.cameraDistance) * blend;
-    const targetHeight = isWallPose ? (cover.isLow ? 1.4 : 1.5) : player.isCrouching ? 1.15 : 1.6;
+    const targetHeight = isWallPose ? (cover.isLow ? 1.25 : 1.5) : player.isCrouching ? 1.15 : 1.6;
     this.cameraHeight += (targetHeight - this.cameraHeight) * blend;
 
     const cosPitch = Math.cos(player.pitch);
@@ -1085,10 +1082,8 @@ export class Game {
     tmpRight.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
     let targetShoulderSide = 1;
     if (cover) {
-      // 高い壁に背をつけている間は壁から離れた側の肩越し、それ以外は身を乗り出す側の肩越し
-      const sideDirection = isWallPose && !cover.isLow
-        ? cover.normal
-        : tmpDirection.copy(cover.tangent).multiplyScalar(player.coverSide);
+      // 身を乗り出す側へカメラを寄せ、キャラクターと身を乗り出す先の両方が見えるようにする
+      const sideDirection = tmpDirection.copy(cover.tangent).multiplyScalar(player.coverSide);
       targetShoulderSide = sideDirection.x * tmpRight.x + sideDirection.z * tmpRight.z >= 0 ? 1 : -1;
     }
     this.cameraShoulderSide += (targetShoulderSide - this.cameraShoulderSide) * (1 - Math.exp(-dt * 8));
