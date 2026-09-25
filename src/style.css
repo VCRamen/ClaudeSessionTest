@@ -192,6 +192,14 @@ body {
   color: #ffb13d;
 }
 
+#minimap {
+  position: absolute;
+  left: 20px;
+  top: 20px;
+  width: 190px;
+  height: 190px;
+}
+
 #top-bar {
   position: absolute;
   top: 16px;
@@ -402,11 +410,50 @@ body {
   color: var(--muted);
 }
 
-.pickup-stats {
+/* 武器の性能表（基礎値 + 強化値） */
+.weapon-stats {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 1px 12px;
+  margin: 4px auto;
+  font-size: 13px;
+  text-align: left;
+  width: max-content;
+}
+
+.stat-name {
+  color: var(--muted);
+}
+
+.stat-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.stat-bonus {
+  margin-left: 4px;
+  color: #7dff9d;
+}
+
+.stat-unit {
+  margin-left: 3px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.stat-traits {
   font-size: 12px;
-  letter-spacing: 1px;
   color: #ffd9a8;
   margin-bottom: 4px;
+}
+
+/* ショップ中は HUD の値が更新されないので、ショップ側と重複する表示は隠す */
+#hud.shop-open #status-panel,
+#hud.shop-open #weapon-panel,
+#hud.shop-open #minimap,
+#hud.shop-open #crosshair {
+  visibility: hidden;
 }
 
 .pickup-name {
@@ -706,6 +753,35 @@ button.primary:hover:not(:disabled) {
 .shop-panel h2 {
   font-size: 28px;
   color: var(--accent);
+}
+
+.shop-panel .shop-status {
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  font-size: 18px;
+}
+
+.shop-weapon {
+  padding: 10px 12px 4px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+}
+
+.shop-weapon-name {
+  font-weight: 800;
+  font-size: 16px;
+}
+
+.shop-weapon-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.shop-weapon .weapon-stats {
+  margin: 6px 0;
 }
 
 #shop-content {

@@ -175,7 +175,7 @@ interface SpawnPoint {
 }
 
 /** ワールド座標の長方形 */
-interface Rect {
+export interface Rect {
   minX: number;
   maxX: number;
   minZ: number;
@@ -192,7 +192,8 @@ export class Level {
 
   private readonly staticColliders: Collider[] = [];
   private readonly spawns: SpawnPoint[] = [];
-  private readonly blocks: Rect[] = [];
+  /** 建物ブロック（ミニマップにも使う） */
+  readonly blocks: Rect[] = [];
   private readonly portalMeshes: THREE.Mesh[] = [];
   private readonly lanterns: THREE.Object3D[] = [];
   private readonly wires = new WireBatch();

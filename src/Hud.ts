@@ -54,6 +54,11 @@ export class Hud {
     this.root.classList.toggle('hidden', !isVisible);
   }
 
+  /** ショップ表示中は、ショップ側に出している所持金・HP などを HUD からは隠す */
+  SetShopOpen(isOpen: boolean): void {
+    this.root.classList.toggle('shop-open', isOpen);
+  }
+
   SetWave(text: string, remaining: number): void {
     this.waveInfo.textContent = text;
     this.enemyCount.textContent = remaining > 0 ? `残り ${remaining} 体` : '';
@@ -157,6 +162,7 @@ export class Hud {
     this.SetPickupPrompt(null);
     this.SetCoverPrompt(null);
     this.SetIndicators([]);
+    this.SetShopOpen(false);
   }
 
   ShowBanner(title: string, subtitle: string, duration = 2.5): void {

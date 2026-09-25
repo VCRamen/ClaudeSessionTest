@@ -22,6 +22,9 @@ import { BuildWaveComposition, Enemy } from './Enemy';
 import type { EnemyContext, EnemyKind } from './Enemy';
 import { IntersectRaySphere, RaycastColliders } from './Collision';
 import { FindCover } from './Cover';
+import { FormatWeaponStatsHtml } from './WeaponStats';
+import { Minimap } from './Minimap';
+import type { MinimapMarker } from './Minimap';
 import type { ColliderHit } from './Collision';
 import { PickRandomDropWeapon } from './Weapons';
 import type { WeaponId, WeaponInstance } from './Weapons';
@@ -106,6 +109,7 @@ export class Game {
   private readonly effects: Effects;
   private readonly projectiles: ProjectileSystem;
   private readonly pickups: PickupManager;
+  private readonly minimap: Minimap;
   private readonly avatar = new PlayerAvatar();
   private readonly player = new Player();
   private enemies: Enemy[] = [];
@@ -163,6 +167,7 @@ export class Game {
     this.effects = new Effects(this.scene);
     this.projectiles = new ProjectileSystem(this.scene);
     this.pickups = new PickupManager(this.scene);
+    this.minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, this.level.blocks);
     this.scene.add(this.avatar.root);
     this.avatar.root.position.copy(this.level.playerStart);
     this.avatar.SetWeapon('handgun');
@@ -170,6 +175,7 @@ export class Game {
     this.shop = new Shop({
       OnPurchase: () => this.sfx.PlayCoin(),
       OnNextWave: () => {
+        this.hud.SetShopOpen(false);
         this.StartNextWave();
         this.RequestLock();
       },
@@ -430,6 +436,7 @@ export class Game {
 
   private OpenShop(): void {
     this.state = 'shop';
+    this.hud.SetShopOpen(true);
     this.input.ExitLock();
     this.hud.SetPickupPrompt(null);
     this.shop.Open(this.player, this.wave, this.wave + 1);
@@ -561,6 +568,7 @@ export class Game {
     this.UpdateCamera(dt);
     this.UpdateIndicators(dt);
     this.UpdateCoverPrompt();
+    this.UpdateMinimap();
     this.UpdateHud(dt);
   }
 
@@ -580,7 +588,7 @@ export class Game {
       this.hud.SetPickupPrompt(
         `<span class="pickup-name" style="color:${color}">${nearby.weapon.GetDisplayName()}</span>`
         + `<div class="pickup-desc">${nearby.weapon.def.description}</div>`
-        + `<div class="pickup-stats">${this.FormatWeaponStats(nearby.weapon)}</div>`
+        + FormatWeaponStatsHtml(nearby.weapon)
         + `<b>[1]〜[4]</b> キーでスロットに登録`,
       );
       if (slotKey >= 0) {
@@ -612,19 +620,6 @@ export class Game {
     } else if (!player.StartReload()) {
       this.sfx.PlayEmpty();
     }
-  }
-
-  /** 威力・連射・装弾数を 5 段階の目安で表示する */
-  private FormatWeaponStats(weapon: WeaponInstance): string {
-    const def = weapon.def;
-    const damagePerTrigger = weapon.GetDamage() * def.pellets * def.burstCount;
-    const shotsPerSecond = def.burstCount / weapon.GetFireInterval();
-    const Rate = (value: number, thresholds: number[]) => thresholds.filter((threshold) => value >= threshold).length + 1;
-    const Bar = (level: number) => '■'.repeat(level) + '□'.repeat(5 - level);
-    const power = Rate(damagePerTrigger, [20, 40, 80, 150]);
-    const rate = Rate(shotsPerSecond, [1.5, 3, 7, 12]);
-    const mag = Rate(weapon.GetMagSize(), [4, 8, 16, 29]);
-    return `威力 ${Bar(power)}　連射 ${Bar(rate)}　装弾 ${Bar(mag)}`;
   }
 
   private GetCurrentSpread(weapon: WeaponInstance): number {
@@ -1125,6 +1120,23 @@ export class Game {
     } else {
       this.hud.SetCoverPrompt('<b>[A][D]</b> 壁沿いに移動　<b>[右クリック]</b> 身を乗り出す　<b>[Q]</b> 離れる');
     }
+  }
+
+  private UpdateMinimap(): void {
+    const markers: MinimapMarker[] = [];
+    for (const pickup of this.pickups.pickups) {
+      let color = '#d8b030';
+      if (pickup.kind === 'health') color = '#33dd66';
+      if (pickup.kind === 'weapon' && pickup.weapon) {
+        color = this.IsBonusPickup(pickup) ? '#ffd34d' : TIER_CSS_COLORS[Math.min(pickup.weapon.def.tier, TIER_CSS_COLORS.length - 1)];
+      }
+      markers.push({ x: pickup.position.x, z: pickup.position.z, color, size: pickup.kind === 'weapon' ? 3.5 : 2.8, isClampedToEdge: false });
+    }
+    for (const enemy of this.enemies) {
+      const isBoss = enemy.def.kind === 'boss';
+      markers.push({ x: enemy.position.x, z: enemy.position.z, color: isBoss ? '#ff9a1f' : '#ff3b4a', size: isBoss ? 6 : 3.5, isClampedToEdge: true });
+    }
+    this.minimap.Draw(this.player.position.x, this.player.position.z, this.player.yaw, markers);
   }
 
   private UpdateHud(dt: number): void {
