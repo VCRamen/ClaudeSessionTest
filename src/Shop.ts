@@ -23,6 +23,8 @@ export class Shop {
   private readonly nextButton = document.getElementById('shop-next') as HTMLButtonElement;
   private player: Player | null = null;
   private maxHpUpgrades = 0;
+  /** 右側に詳細を表示している武器のスロット */
+  private selectedSlot = 0;
   private readonly callbacks: ShopCallbacks;
 
   constructor(callbacks: ShopCallbacks) {
@@ -39,6 +41,7 @@ export class Shop {
 
   Open(player: Player, clearedWave: number, nextWave: number): void {
     this.player = player;
+    this.selectedSlot = player.currentSlot;
     this.title.textContent = `WAVE ${clearedWave} クリア！`;
     this.nextButton.textContent = `Wave ${nextWave} を開始 ▶`;
     this.root.classList.remove('hidden');
@@ -49,14 +52,43 @@ export class Shop {
     this.root.classList.add('hidden');
   }
 
+  /** 左：武器の選択とプレイヤーの回復　右：選んだ武器の詳細と強化・弾薬補充 */
   private Render(): void {
     const player = this.player;
     if (!player) return;
     const scrollTop = this.content.scrollTop;
     this.content.innerHTML = '';
     this.status.innerHTML = `<div>所持金 <strong class="money">$ ${player.money}</strong></div><div>HP <strong>${Math.ceil(player.hp)} / ${player.maxHp}</strong></div>`;
+    if (!player.slots[this.selectedSlot]) this.selectedSlot = player.slots.findIndex((weapon) => weapon !== null);
 
-    const healSection = this.CreateSection('回復');
+    const columns = document.createElement('div');
+    columns.className = 'shop-columns';
+    const left = document.createElement('div');
+    left.className = 'shop-column';
+    const right = document.createElement('div');
+    right.className = 'shop-column shop-detail';
+    columns.append(left, right);
+    this.content.appendChild(columns);
+
+    // ---- 左：武器の選択 ----
+    const weaponSection = this.CreateSection(left, '武器');
+    player.slots.forEach((weapon, index) => {
+      const button = document.createElement('button');
+      button.className = `shop-weapon-tab${index === this.selectedSlot ? ' selected' : ''}`;
+      button.disabled = !weapon;
+      const ammo = !weapon ? '' : weapon.HasInfiniteAmmo() ? '∞' : `${weapon.reserve} / ${weapon.GetMaxReserve()}`;
+      button.innerHTML = `<span class="slot-key">${index + 1}</span>`
+        + `<span class="slot-name">${weapon ? weapon.GetDisplayName() : '— 空き —'}</span>`
+        + `<span class="slot-ammo">${ammo}</span>`;
+      button.addEventListener('click', () => {
+        this.selectedSlot = index;
+        this.Render();
+      });
+      weaponSection.appendChild(button);
+    });
+
+    // ---- 左：プレイヤー ----
+    const healSection = this.CreateSection(left, 'プレイヤー');
     const missingHp = Math.ceil(player.maxHp - player.hp);
     this.AddItem(healSection, `HP +${HEAL_SMALL_AMOUNT}`, '少しだけ回復する', HEAL_SMALL_COST, missingHp > 0, () => {
       player.hp = Math.min(player.maxHp, player.hp + HEAL_SMALL_AMOUNT);
@@ -72,34 +104,32 @@ export class Shop {
       this.maxHpUpgrades++;
     });
 
-    const weaponSection = this.CreateSection('武器');
-    player.slots.forEach((weapon, index) => {
-      if (!weapon) return;
-      // 武器ごとに現在の性能を数値で表示し、その下に強化・弾薬補充を並べる
-      const card = document.createElement('div');
-      card.className = 'shop-weapon';
-      card.innerHTML = `<div class="shop-weapon-name">[${index + 1}] ${weapon.GetDisplayName()}</div>`
-        + `<div class="shop-weapon-desc">${weapon.def.description}</div>${FormatWeaponStatsHtml(weapon)}`;
-      weaponSection.appendChild(card);
-      if (weapon.IsMaxLevel()) {
-        this.AddItem(card, '強化', '最大レベルです', 0, false, () => {});
-      } else {
-        this.AddItem(card, `強化（Lv${weapon.level} → Lv${weapon.level + 1}）`, FormatUpgradePreview(weapon),
-          weapon.GetUpgradeCost(), true, () => weapon.Upgrade());
-      }
-      if (!weapon.HasInfiniteAmmo()) {
-        this.AddItem(card, '弾薬補充', `予備弾 ${weapon.reserve} / ${weapon.GetMaxReserve()}`,
-          weapon.GetAmmoRefillCost(), weapon.NeedsAmmo(), () => weapon.RefillAmmo(1));
-      }
-    });
+    // ---- 右：選んだ武器の詳細 ----
+    const weapon = player.slots[this.selectedSlot];
+    if (!weapon) return;
+    right.innerHTML = `<div class="shop-weapon-name">[${this.selectedSlot + 1}] ${weapon.GetDisplayName()}</div>`
+      + `<div class="shop-weapon-desc">${weapon.def.description}</div>${FormatWeaponStatsHtml(weapon)}`;
+    const actions = this.CreateSection(right, '強化・補充');
+    if (weapon.IsMaxLevel()) {
+      this.AddItem(actions, 'レベルアップ', '最大レベルです', 0, false, () => {});
+    } else {
+      this.AddItem(actions, `レベルアップ（Lv${weapon.level} → Lv${weapon.level + 1}）`, FormatUpgradePreview(weapon),
+        weapon.GetUpgradeCost(), true, () => weapon.Upgrade());
+    }
+    if (weapon.HasInfiniteAmmo()) {
+      this.AddItem(actions, '弾薬補充', '予備弾は無限です', 0, false, () => {});
+    } else {
+      this.AddItem(actions, '弾薬補充', `予備弾 ${weapon.reserve} / ${weapon.GetMaxReserve()}`,
+        weapon.GetAmmoRefillCost(), weapon.NeedsAmmo(), () => weapon.RefillAmmo(1));
+    }
     this.content.scrollTop = scrollTop;
   }
 
-  private CreateSection(title: string): HTMLElement {
+  private CreateSection(parent: HTMLElement, title: string): HTMLElement {
     const section = document.createElement('div');
     section.className = 'shop-section';
     section.innerHTML = `<h3>${title}</h3>`;
-    this.content.appendChild(section);
+    parent.appendChild(section);
     return section;
   }
 

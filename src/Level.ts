@@ -13,7 +13,8 @@ import {
   BuildPaperLantern, BuildParkingMeter, BuildPlanter, BuildShop, BuildShrine, BuildStoneLantern, BuildStreetLamp,
   BuildTorii, BuildUtilityPole, BuildVendingMachine, SHOP_STYLES,
 } from './CityProps';
-import { CreateBuntingTexture, CreateDuskSkyTexture, CreatePavingTexture, CreateSidewalkTexture } from './CityTextures';
+import { CreateBuntingTexture, CreatePavingTexture, CreateSidewalkTexture } from './CityTextures';
+import { SkySystem } from './SkySystem';
 import { BatchStaticMeshes, MarkDynamic, WireBatch } from './StaticBatcher';
 
 /** 大通りの半幅（歩道を含む） */
@@ -198,12 +199,13 @@ export class Level {
   private readonly lanterns: THREE.Object3D[] = [];
   private readonly wires = new WireBatch();
   private readonly buntingMatrices: THREE.Matrix4[][] = [[], []];
+  private readonly sky: SkySystem;
   private styleIndex = 0;
   private time = 0;
 
   constructor(scene: THREE.Scene) {
     scene.add(this.group);
-    this.BuildSkyAndLighting(scene);
+    this.sky = new SkySystem(scene, MAP_HALF_SIZE + 6);
     this.CollectBlocks();
     this.BuildGround();
     this.BuildBlockBuildings();
@@ -225,6 +227,7 @@ export class Level {
 
   Update(dt: number): void {
     this.time += dt;
+    this.sky.Update(dt);
     for (let i = 0; i < this.portalMeshes.length; i++) {
       const portal = this.portalMeshes[i];
       portal.rotation.z += dt * 0.8;
@@ -235,6 +238,11 @@ export class Level {
     for (let i = 0; i < this.lanterns.length; i++) {
       this.lanterns[i].rotation.z = Math.sin(this.time * 1.7 + i * 1.3) * 0.08;
     }
+  }
+
+  /** 時間帯（0 = 夕方、1 = 夜）を設定する。isImmediate でなければ数秒かけて移り変わる */
+  SetTimeOfDay(time: number, isImmediate = false): void {
+    this.sky.SetTime(time, isImmediate);
   }
 
   /** side 方向（東西南北）の辺にある出現口 */
@@ -305,35 +313,6 @@ export class Level {
   // ------------------------------------------------------------
   // 構築
   // ------------------------------------------------------------
-
-  private BuildSkyAndLighting(scene: THREE.Scene): void {
-    scene.background = new THREE.Color(0x3a2a5e);
-    scene.fog = new THREE.FogExp2(0x8a5a78, 0.013);
-
-    const sky = new THREE.Mesh(
-      new THREE.SphereGeometry(220, 24, 16),
-      new THREE.MeshBasicMaterial({ map: CreateDuskSkyTexture(), side: THREE.BackSide, fog: false }),
-    );
-    scene.add(sky);
-
-    scene.add(new THREE.HemisphereLight(0xa8a0ff, 0x6a4a3a, 1.5));
-
-    // 夕日（低い角度から差し込むオレンジの光）
-    const sun = new THREE.DirectionalLight(0xffa868, 2.2);
-    sun.position.set(-30, 22, 18);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    const shadowCamera = sun.shadow.camera;
-    const shadowRange = MAP_HALF_SIZE + 6;
-    shadowCamera.left = -shadowRange;
-    shadowCamera.right = shadowRange;
-    shadowCamera.top = shadowRange;
-    shadowCamera.bottom = -shadowRange;
-    shadowCamera.near = 1;
-    shadowCamera.far = 120;
-    sun.shadow.bias = -0.0008;
-    scene.add(sun);
-  }
 
   /** 建物ブロック（区画のブロック・外周・大通りの延長部分）を集めて当たり判定を作る */
   private CollectBlocks(): void {

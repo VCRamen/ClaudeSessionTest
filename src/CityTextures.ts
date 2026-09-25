@@ -64,22 +64,6 @@ export function CreateSidewalkTexture(): THREE.CanvasTexture {
   return texture;
 }
 
-/** 夕暮れの空（上が紫、地平線がオレンジ） */
-export function CreateDuskSkyTexture(): THREE.CanvasTexture {
-  return CreateCanvasTexture('sky', 16, 512, (context) => {
-    const gradient = context.createLinearGradient(0, 0, 0, 512);
-    // 球に貼ると上端が天頂、中央が地平線になる
-    gradient.addColorStop(0, '#1b1440');
-    gradient.addColorStop(0.22, '#3d2a6e');
-    gradient.addColorStop(0.36, '#8a4f8f');
-    gradient.addColorStop(0.45, '#e0806a');
-    gradient.addColorStop(0.5, '#f6b36b');
-    gradient.addColorStop(1, '#f6b36b');
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, 16, 512);
-  });
-}
-
 /** 店のショーウィンドウ（中が明るく、棚が並んでいる） */
 export function CreateShopWindowTexture(variant: number): THREE.CanvasTexture {
   return CreateCanvasTexture(`shop-window-${variant}`, 256, 128, (context) => {

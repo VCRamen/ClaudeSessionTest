@@ -58,8 +58,67 @@ const LOW_COVER_ARMS: CoverArmPose = {
   gunYaw: 0.6,
 };
 
+/**
+ * リロード中の腕の向き（モデル空間）。銃を胸の前で上に向け、左手を腰へ伸ばしてマガジンを取り、差し込む
+ */
+const RELOAD_RIGHT_UPPER_ARM = new THREE.Vector3(-0.3, -0.75, 0.6).normalize();
+const RELOAD_RIGHT_LOWER_ARM = new THREE.Vector3(0.3, 0.6, 0.75).normalize();
+const RELOAD_LEFT_UPPER_AT_GUN = new THREE.Vector3(0.3, -0.7, 0.65);
+const RELOAD_LEFT_LOWER_AT_GUN = new THREE.Vector3(-0.55, 0.35, 0.75);
+const RELOAD_LEFT_UPPER_AT_BELT = new THREE.Vector3(0.3, -0.95, 0.05);
+const RELOAD_LEFT_LOWER_AT_BELT = new THREE.Vector3(0.25, -0.75, 0.6);
+const RELOAD_GUN_PITCH = -0.85;
+
+function SmoothStep(edge0: number, edge1: number, value: number): number {
+  const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+interface ReloadCurve {
+  /** 銃を持ち上げている度合い（リロード全体の重み） */
+  raise: number;
+  /** 左手が腰（マガジンポーチ）へ伸びている度合い */
+  belt: number;
+  /** 新しいマガジンを左手に持っているか */
+  isHoldingMagazine: boolean;
+  /** マガジンを差し込んだ瞬間の銃の揺れ */
+  jolt: number;
+}
+
+/** リロードの進行度（0〜1）から、各動作の度合いを求める */
+function GetReloadCurve(progress: number): ReloadCurve {
+  if (progress < 0) return { raise: 0, belt: 0, isHoldingMagazine: false, jolt: 0 };
+  return {
+    raise: SmoothStep(0, 0.12, progress) * (1 - SmoothStep(0.88, 1, progress)),
+    belt: SmoothStep(0.15, 0.3, progress) * (1 - SmoothStep(0.42, 0.6, progress)),
+    isHoldingMagazine: progress > 0.28 && progress < 0.64,
+    jolt: Math.exp(-Math.pow((progress - 0.68) / 0.035, 2)),
+  };
+}
+
 const tmpDirection = new THREE.Vector3();
 const tmpInverse = new THREE.Quaternion();
+const tmpQuaternion = new THREE.Quaternion();
+const tmpUpperTarget = new THREE.Vector3();
+const tmpLowerTarget = new THREE.Vector3();
+
+/** 上腕・前腕を目標の向きへ weight の割合で近づける（今のポーズとブレンドする） */
+function BlendArmTowards(
+  upper: THREE.Object3D | null,
+  lower: THREE.Object3D | null,
+  restDirection: THREE.Vector3,
+  upperDirection: THREE.Vector3,
+  lowerDirection: THREE.Vector3,
+  weight: number,
+): void {
+  if (!upper || !lower || weight <= 0) return;
+  tmpQuaternion.setFromUnitVectors(restDirection, upperDirection);
+  upper.quaternion.slerp(tmpQuaternion, weight);
+  tmpInverse.copy(upper.quaternion).invert();
+  tmpDirection.copy(lowerDirection).applyQuaternion(tmpInverse).normalize();
+  tmpQuaternion.setFromUnitVectors(restDirection, tmpDirection);
+  lower.quaternion.slerp(tmpQuaternion, weight);
+}
 
 /** 骨を、親の座標系で見た方向 direction に向ける */
 function PointBone(bone: THREE.Object3D | null, restDirection: THREE.Vector3, direction: THREE.Vector3): void {
@@ -109,6 +168,11 @@ export class PlayerAvatar {
 
   private readonly modelHolder = new THREE.Group();
   private readonly gunPivot = new THREE.Group();
+  /** リロード時に左手に持つマガジン */
+  private readonly magazine = new THREE.Mesh(
+    new THREE.BoxGeometry(0.05, 0.16, 0.08),
+    new THREE.MeshStandardMaterial({ color: 0x2a2a30, metalness: 0.6, roughness: 0.4 }),
+  );
   private gunMesh: THREE.Group | null = null;
   private muzzle: THREE.Object3D | null = null;
   private currentWeaponId: WeaponId | null = null;
@@ -134,6 +198,8 @@ export class PlayerAvatar {
   constructor() {
     this.root.add(this.modelHolder);
     this.root.add(this.gunPivot);
+    this.magazine.visible = false;
+    this.root.add(this.magazine);
     this.mannequin = new Mannequin();
     this.modelHolder.add(this.mannequin.group);
   }
@@ -224,12 +290,25 @@ export class PlayerAvatar {
       const arms = state.isCrouching ? LOW_COVER_ARMS : HIGH_COVER_ARMS;
       this.gunPivot.rotation.set(arms.gunPitch, arms.gunYaw, 0);
     } else {
-      this.gunPivot.rotation.set(-state.aimPitch - state.recoil * 2, 0, 0);
+      // リロード中は銃を上に向け、マガジンの差し込み口が見えるように少しひねる
+      const curve = GetReloadCurve(state.reloadProgress);
+      const aimPitch = -state.aimPitch - state.recoil * 2;
+      this.gunPivot.rotation.set(
+        aimPitch + (RELOAD_GUN_PITCH - aimPitch) * curve.raise + curve.jolt * 0.2,
+        0.35 * curve.raise,
+        0.45 * curve.raise,
+      );
     }
-    if (state.reloadProgress >= 0) {
-      const reloadTilt = Math.sin(state.reloadProgress * Math.PI);
-      this.gunPivot.rotation.x += reloadTilt * 0.6;
-      this.gunPivot.rotation.z = reloadTilt * 0.5;
+
+    // 左手に持った新しいマガジン
+    const curve = GetReloadCurve(state.isCoverPose ? -1 : state.reloadProgress);
+    this.magazine.visible = curve.isHoldingMagazine;
+    if (curve.isHoldingMagazine) {
+      const leftHand = this.rig?.leftHand ?? this.mannequin.leftHandAnchor;
+      leftHand.getWorldPosition(tmpHandPosition);
+      this.root.worldToLocal(tmpHandPosition);
+      this.magazine.position.copy(tmpHandPosition);
+      this.magazine.rotation.set(0.4, 0, 0);
     }
   }
 
@@ -338,17 +417,29 @@ export class PlayerAvatar {
     SetRotation(rig.head, -pitch * 0.1 - lean * 0.5, -0.12, 0);
 
     // 腕：銃を両手で前に構える
-    const reload = state.reloadProgress >= 0 ? Math.sin(state.reloadProgress * Math.PI) : 0;
     const recoil = state.recoil * 3;
     SetRotation(rig.rightUpperArm, -recoil, 1.25, 0.35);
     SetRotation(rig.rightLowerArm, 0, 0.35, 0);
     SetRotation(rig.rightHand, 0, 0, 0);
-    SetRotation(rig.leftUpperArm, -recoil + reload * 0.5, -1.15, -0.4 - reload * 0.4);
-    SetRotation(rig.leftLowerArm, 0, -1.0 + reload * 0.6, 0);
+    SetRotation(rig.leftUpperArm, -recoil, -1.15, -0.4);
+    SetRotation(rig.leftLowerArm, 0, -1.0, 0);
     SetRotation(rig.leftHand, 0, 0, 0);
 
     if (state.isCoverPose) this.PoseVrmCover(state);
+    else this.PoseVrmReload(state);
     if (this.isVrm0) this.ConvertPoseToVrm0();
+  }
+
+  /** リロード：銃を胸の前で上に向け、左手で腰からマガジンを取って差し込む */
+  private PoseVrmReload(state: AvatarPoseState): void {
+    const curve = GetReloadCurve(state.reloadProgress);
+    if (curve.raise <= 0) return;
+    const rig = this.rig!;
+    if (rig.head) rig.head.rotation.x += 0.3 * curve.raise;
+    BlendArmTowards(rig.rightUpperArm, rig.rightLowerArm, RIGHT_ARM_REST_DIRECTION, RELOAD_RIGHT_UPPER_ARM, RELOAD_RIGHT_LOWER_ARM, curve.raise);
+    tmpUpperTarget.lerpVectors(RELOAD_LEFT_UPPER_AT_GUN, RELOAD_LEFT_UPPER_AT_BELT, curve.belt).normalize();
+    tmpLowerTarget.lerpVectors(RELOAD_LEFT_LOWER_AT_GUN, RELOAD_LEFT_LOWER_AT_BELT, curve.belt).normalize();
+    BlendArmTowards(rig.leftUpperArm, rig.leftLowerArm, LEFT_ARM_REST_DIRECTION, tmpUpperTarget, tmpLowerTarget, curve.raise);
   }
 
   /** 壁に背をつけるポーズ（高い壁は立って銃を顔の横に、低い遮蔽物はしゃがんで銃を斜めに抱える） */
@@ -390,6 +481,8 @@ class Mannequin {
   readonly group = new THREE.Group();
   /** 右手の位置（銃を持たせる場所） */
   readonly rightHandAnchor = new THREE.Object3D();
+  /** 左手の位置（リロードでマガジンを持たせる場所） */
+  readonly leftHandAnchor = new THREE.Object3D();
 
   private readonly pelvis = new THREE.Group();
   private readonly torso = new THREE.Group();
@@ -439,6 +532,8 @@ class Mannequin {
     }
     this.rightHandAnchor.position.set(0, 0, 0.47);
     this.rightArm.add(this.rightHandAnchor);
+    this.leftHandAnchor.position.set(0, 0, 0.47);
+    this.leftArm.add(this.leftHandAnchor);
     this.leftArm.rotation.set(0.1, -0.5, 0);
     this.rightArm.rotation.set(0.15, 0.25, 0);
 
@@ -479,9 +574,16 @@ class Mannequin {
     this.torso.rotation.set(crouch * 0.3 - state.aimPitch * 0.4, 0, 0);
     this.head.rotation.set(-state.aimPitch * 0.3, 0, 0);
     const armPitch = -state.aimPitch * 0.6 + state.recoil * -3;
-    const reload = state.reloadProgress >= 0 ? Math.sin(state.reloadProgress * Math.PI) : 0;
-    this.rightArm.rotation.set(0.15 + armPitch, 0.25, 0);
-    this.leftArm.rotation.set(0.1 + armPitch + reload * 0.8, -0.5 + reload * 0.3, 0);
+    // リロード：右腕で銃を持ち上げ、左腕を腰（マガジン）へ伸ばしてから銃へ戻す
+    const curve = GetReloadCurve(state.reloadProgress);
+    const leftPitch = 0.25 + (1.3 - 0.25) * curve.belt;
+    const leftYaw = -0.55 + 0.45 * curve.belt;
+    this.rightArm.rotation.set(0.15 + armPitch + (-0.25 - 0.15 - armPitch) * curve.raise, 0.25, 0);
+    this.leftArm.rotation.set(
+      0.1 + armPitch + (leftPitch - 0.1 - armPitch) * curve.raise,
+      -0.5 + (leftYaw + 0.5) * curve.raise,
+      0,
+    );
     if (state.isCoverPose) {
       // 壁に背をつけて顔を横に向ける。高い壁は銃を顔の横に、低い遮蔽物は体の前に構える
       this.torso.rotation.set(crouch * 0.25 - 0.05, state.coverLook * 0.15, 0);

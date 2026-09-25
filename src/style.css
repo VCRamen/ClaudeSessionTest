@@ -744,7 +744,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .shop-panel {
-  width: min(620px, 100%);
+  width: min(920px, 100%);
   max-height: calc(100vh - 32px);
   display: flex;
   flex-direction: column;
@@ -761,6 +761,69 @@ button.primary:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.05);
   border-radius: 8px;
   font-size: 18px;
+}
+
+.shop-columns .shop-item {
+  padding: 4px 4px;
+}
+
+.shop-columns .shop-item button {
+  padding: 7px 12px;
+}
+
+.shop-columns {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.shop-detail {
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+}
+
+.shop-detail .weapon-stats {
+  margin: 10px 0;
+  font-size: 14px;
+}
+
+.shop-weapon-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 5px;
+  padding: 7px 12px;
+  text-align: left;
+}
+
+.shop-weapon-tab.selected {
+  border-color: var(--accent);
+  background: rgba(255, 138, 31, 0.18);
+}
+
+.shop-weapon-tab .slot-key {
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.shop-weapon-tab .slot-name {
+  flex: 1;
+  font-weight: 700;
+}
+
+.shop-weapon-tab .slot-ammo {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .shop-columns {
+    grid-template-columns: 1fr;
+  }
 }
 
 .shop-weapon {

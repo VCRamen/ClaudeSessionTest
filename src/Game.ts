@@ -401,6 +401,8 @@ export class Game {
     this.nav.Rebuild(this.level.colliders);
     this.state = 'playing';
     this.ChooseSpawnSides();
+    // Wave が進むごとに日が暮れて夜になる（エンドレスは夜のまま）
+    this.level.SetTimeOfDay((this.wave - 1) / (TOTAL_WAVES - 1), this.wave === 1);
 
     const hasBoss = this.spawnQueue.includes('boss');
     let subtitle = `${this.spawnQueue.length} 体のモンスターが襲来！`;
@@ -464,6 +466,7 @@ export class Game {
 
   private ReturnToTitle(): void {
     this.state = 'title';
+    this.level.SetTimeOfDay(0, true);
     this.input.ExitLock();
     this.ClearField();
     this.shop.Close();
