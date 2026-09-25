@@ -362,3 +362,195 @@ export function BuildManhole(): THREE.Mesh {
   mesh.receiveShadow = true;
   return mesh;
 }
+
+/** 路地に面した建物の裏側（勝手口・窓・室外機・配管） */
+export function BuildBackAlleyFacade(width: number, height: number, depth: number, wallColor: number, variant: number): THREE.Group {
+  const group = new THREE.Group();
+  AddBox(group, GetStandardMaterial(wallColor, 0.95), width, height, depth, 0, height / 2, -depth / 2);
+  AddBox(group, GetStandardMaterial(0x2a2430), width + 0.3, 0.3, depth + 0.3, 0, height + 0.15, -depth / 2);
+  // 勝手口
+  const doorX = (variant % 2 === 0 ? -1 : 1) * (width / 2 - 0.9);
+  AddBox(group, GetStandardMaterial(0x5a4a3a, 0.7), 0.9, 2.0, 0.08, doorX, 1.0, 0.04, false);
+  AddPlane(group, GetGlowMaterial(0xffc070), 0.4, 0.12, doorX, 2.2, 0.03);
+  // 窓（明かりの点いたものも）
+  const windowCount = Math.max(1, Math.floor(width / 2.4));
+  for (let floor = 0; floor < Math.max(1, Math.floor((height - 1.5) / 2.6)); floor++) {
+    for (let i = 0; i < windowCount; i++) {
+      const x = (i - (windowCount - 1) / 2) * (width / windowCount);
+      if (floor === 0 && Math.abs(x - doorX) < 1.2) continue;
+      const isLit = (floor * 3 + i + variant) % 4 === 0;
+      AddPlane(group, GetTextureMaterial(CreateUpperWindowTexture(isLit), true), 0.9, 0.9, x, 1.9 + floor * 2.6, 0.02);
+    }
+  }
+  // 室外機
+  const unitX = -doorX * 0.6;
+  AddBox(group, GetStandardMaterial(0xd8d4cc, 0.6), 0.8, 0.6, 0.3, unitX, 0.3, 0.17);
+  AddPlane(group, GetStandardMaterial(0x333333), 0.45, 0.45, unitX - 0.1, 0.3, 0.33);
+  // 雨どい
+  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, height, 6), GetStandardMaterial(0x8a8a86, 0.6));
+  pipe.position.set(width / 2 - 0.15, height / 2, 0.08);
+  group.add(pipe);
+  return group;
+}
+
+/** 乗用車（低い遮蔽物）。長さ方向がローカル Z */
+export function BuildCar(colorIndex: number): THREE.Group {
+  const colors = [0xc0392b, 0xecf0f1, 0x2c3e50, 0x16a085, 0xd4ac0d, 0x7f8c8d];
+  const group = new THREE.Group();
+  const bodyMaterial = GetStandardMaterial(colors[colorIndex % colors.length], 0.35, 0.4);
+  const glassMaterial = GetStandardMaterial(0x1c2530, 0.1, 0.6);
+  AddBox(group, bodyMaterial, 1.8, 0.7, 4.3, 0, 0.6, 0);
+  AddBox(group, bodyMaterial, 1.6, 0.5, 2.2, 0, 1.2, -0.2);
+  AddBox(group, glassMaterial, 1.62, 0.36, 2.0, 0, 1.2, -0.2, false);
+  const tireMaterial = GetStandardMaterial(0x111111, 0.9);
+  for (const x of [-0.85, 0.85]) {
+    for (const z of [-1.35, 1.35]) {
+      const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.25, 12), tireMaterial);
+      tire.rotation.z = Math.PI / 2;
+      tire.position.set(x, 0.33, z);
+      group.add(tire);
+    }
+  }
+  for (const x of [-0.6, 0.6]) {
+    AddPlane(group, GetGlowMaterial(0xfff2c0), 0.3, 0.12, x, 0.72, 2.16);
+    const tail = AddPlane(group, GetGlowMaterial(0xc01010), 0.3, 0.1, x, 0.75, -2.16);
+    tail.rotation.y = Math.PI;
+  }
+  return group;
+}
+
+/** 鳥居（柱の間を通れる）。柱の位置は x = ±1.2 */
+export function BuildTorii(): THREE.Group {
+  const group = new THREE.Group();
+  const redMaterial = GetStandardMaterial(0xc8321e, 0.6);
+  const blackMaterial = GetStandardMaterial(0x1a1a1a, 0.7);
+  for (const x of [-1.2, 1.2]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 3.6, 12), redMaterial);
+    post.position.set(x, 1.8, 0);
+    post.castShadow = true;
+    group.add(post);
+    AddBox(group, blackMaterial, 0.42, 0.3, 0.42, x, 0.15, 0);
+  }
+  AddBox(group, redMaterial, 3.3, 0.22, 0.3, 0, 2.95, 0);
+  AddBox(group, blackMaterial, 3.9, 0.22, 0.4, 0, 3.7, 0);
+  AddBox(group, redMaterial, 3.6, 0.18, 0.36, 0, 3.52, 0);
+  AddBox(group, redMaterial, 0.2, 0.55, 0.2, 0, 3.2, 0);
+  return group;
+}
+
+/** 小さな社殿。正面が +Z */
+export function BuildShrine(width: number, depth: number): THREE.Group {
+  const group = new THREE.Group();
+  const woodMaterial = GetStandardMaterial(0x6a4028, 0.8);
+  AddBox(group, GetStandardMaterial(0x9a948c, 0.95), width + 0.6, 0.5, depth + 0.6, 0, 0.25, 0);
+  AddBox(group, woodMaterial, width, 2.6, depth, 0, 1.8, 0);
+  AddBox(group, GetStandardMaterial(0xc8321e, 0.6), width * 0.6, 1.6, 0.05, 0, 1.6, depth / 2 + 0.03, false);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(width, depth) * 0.85, 1.8, 4), GetStandardMaterial(0x2a3a3a, 0.7));
+  roof.rotation.y = Math.PI / 4;
+  roof.position.y = 4.0;
+  roof.scale.set(1, 1, depth / width);
+  roof.castShadow = true;
+  group.add(roof);
+  // 賽銭箱としめ縄
+  AddBox(group, woodMaterial, 1.0, 0.6, 0.5, 0, 0.8, depth / 2 + 0.5);
+  const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, width * 0.7, 8), GetStandardMaterial(0xd8c89a, 0.9));
+  rope.rotation.z = Math.PI / 2;
+  rope.position.set(0, 2.9, depth / 2 + 0.1);
+  group.add(rope);
+  const lantern = BuildPaperLantern();
+  lantern.position.set(0, 2.4, depth / 2 + 0.3);
+  group.add(lantern);
+  group.userData.swingingObjects = [lantern];
+  return group;
+}
+
+/** 石灯籠 */
+export function BuildStoneLantern(): THREE.Group {
+  const group = new THREE.Group();
+  const stoneMaterial = GetStandardMaterial(0x8e8a82, 0.95);
+  AddBox(group, stoneMaterial, 0.6, 0.2, 0.6, 0, 0.1, 0);
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.7, 8), stoneMaterial);
+  pillar.position.y = 0.55;
+  group.add(pillar);
+  AddBox(group, stoneMaterial, 0.5, 0.12, 0.5, 0, 0.95, 0);
+  const light = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.3, 0.34), GetGlowMaterial(0xffc070));
+  light.position.y = 1.16;
+  group.add(light);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.3, 4), stoneMaterial);
+  roof.rotation.y = Math.PI / 4;
+  roof.position.y = 1.46;
+  roof.castShadow = true;
+  group.add(roof);
+  return group;
+}
+
+/** 生け垣（低い遮蔽物）。長さ方向がローカル X */
+export function BuildHedge(length: number, height: number): THREE.Group {
+  const group = new THREE.Group();
+  AddBox(group, GetStandardMaterial(0x355e27, 0.95), length, height, 0.8, 0, height / 2, 0);
+  const leafMaterial = GetStandardMaterial(0x416f2e, 0.95);
+  for (let x = -length / 2 + 0.4; x < length / 2; x += 0.7) {
+    const bump = new THREE.Mesh(new THREE.SphereGeometry(0.35, 7, 5), leafMaterial);
+    bump.position.set(x, height, (Math.random() - 0.5) * 0.3);
+    bump.scale.y = 0.5;
+    group.add(bump);
+  }
+  return group;
+}
+
+/** 紅葉した木 */
+export function BuildAutumnTree(scale = 1): THREE.Group {
+  const group = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, 3.0, 8), GetStandardMaterial(0x5a3e2a, 0.9));
+  trunk.position.y = 1.5;
+  trunk.castShadow = true;
+  group.add(trunk);
+  const leafColors = [0xc8662a, 0xd88a2a, 0xb8442a];
+  for (let i = 0; i < 5; i++) {
+    const angle = (i / 5) * Math.PI * 2;
+    const leaves = new THREE.Mesh(new THREE.SphereGeometry(1.0, 9, 7), GetStandardMaterial(leafColors[i % 3], 0.9));
+    leaves.position.set(Math.sin(angle) * 0.7, 3.3 + (i % 2) * 0.45, Math.cos(angle) * 0.7);
+    leaves.castShadow = true;
+    group.add(leaves);
+  }
+  group.scale.setScalar(scale);
+  return group;
+}
+
+/** コンクリートブロック塀（マップの外周）。長さ方向がローカル X */
+export function BuildBlockWall(length: number): THREE.Group {
+  const group = new THREE.Group();
+  AddBox(group, GetStandardMaterial(0xa49c90, 0.95), length, 2.2, 0.25, 0, 1.1, 0);
+  AddBox(group, GetStandardMaterial(0x8a8278, 0.9), length, 0.08, 0.32, 0, 2.24, 0, false);
+  for (let x = -length / 2; x < length / 2; x += 0.8) {
+    AddBox(group, GetStandardMaterial(0x7a7268, 0.95), 0.03, 2.2, 0.27, x, 1.1, 0, false);
+  }
+  return group;
+}
+
+/** ごみ袋の山（見た目のみ） */
+export function BuildGarbageBags(): THREE.Group {
+  const group = new THREE.Group();
+  const bagMaterial = GetStandardMaterial(0x1a1a22, 0.3, 0.1);
+  const offsets: [number, number, number][] = [[0, 0.25, 0], [0.4, 0.22, 0.2], [-0.3, 0.2, 0.3], [0.1, 0.55, 0.1]];
+  for (const [x, y, z] of offsets) {
+    const bag = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), bagMaterial);
+    bag.scale.set(1, 0.85, 1);
+    bag.position.set(x, y, z);
+    group.add(bag);
+  }
+  // カラス除けネット
+  const net = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.05, 1.0), GetStandardMaterial(0x2a5aa0, 0.8));
+  net.position.set(0.05, 0.02, 0.15);
+  group.add(net);
+  return group;
+}
+
+/** コインパーキングの精算機 */
+export function BuildParkingMeter(): THREE.Group {
+  const group = new THREE.Group();
+  AddBox(group, GetStandardMaterial(0xe8e8e0, 0.5), 0.5, 1.4, 0.35, 0, 0.7, 0);
+  AddPlane(group, GetGlowMaterial(0x3a8ae0), 0.36, 0.3, 0, 1.1, 0.18);
+  AddBox(group, GetStandardMaterial(0xf2c400, 0.5), 0.52, 0.3, 0.37, 0, 1.55, 0);
+  return group;
+}

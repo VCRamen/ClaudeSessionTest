@@ -25,6 +25,7 @@ export class Hud {
   private readonly damageVignette = GetElement('damage-vignette');
   private readonly scopeOverlay = GetElement('scope-overlay');
   private readonly pickupPrompt = GetElement('pickup-prompt');
+  private readonly coverPrompt = GetElement('cover-prompt');
   private readonly banner = GetElement('banner');
   private readonly bannerTitle = GetElement('banner-title');
   private readonly bannerSub = GetElement('banner-sub');
@@ -99,6 +100,11 @@ export class Hud {
     if (text) this.pickupPrompt.innerHTML = text;
   }
 
+  SetCoverPrompt(html: string | null): void {
+    this.coverPrompt.classList.toggle('hidden', !html);
+    if (html && this.coverPrompt.innerHTML !== html) this.coverPrompt.innerHTML = html;
+  }
+
   SetBoss(name: string | null, ratio: number): void {
     this.bossBar.classList.toggle('hidden', name === null);
     if (name !== null) {
@@ -149,6 +155,7 @@ export class Hud {
     this.notifications.innerHTML = '';
     this.SetBoss(null, 0);
     this.SetPickupPrompt(null);
+    this.SetCoverPrompt(null);
     this.SetIndicators([]);
   }
 

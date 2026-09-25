@@ -18,6 +18,37 @@ export interface AvatarPoseState {
   /** 0〜1 のリロード進行度。リロード中でなければ -1 */
   reloadProgress: number;
   recoil: number;
+  /** 壁に背をつけて張り付いているポーズ */
+  isCoverPose: boolean;
+  /** 張り付き中に顔を向ける側（モデルから見て左が +1、右が -1） */
+  coverLook: number;
+}
+
+/** 腕の骨が向いている方向（VRM の正規化ボーンの T ポーズ基準） */
+const RIGHT_ARM_REST_DIRECTION = new THREE.Vector3(-1, 0, 0);
+const LEFT_ARM_REST_DIRECTION = new THREE.Vector3(1, 0, 0);
+/** 張り付きポーズの腕の向き（モデル空間：+Z が正面、+X が左） */
+const COVER_RIGHT_UPPER_ARM = new THREE.Vector3(-0.2, -0.95, 0.25).normalize();
+const COVER_RIGHT_LOWER_ARM = new THREE.Vector3(0.35, 0.6, 0.7).normalize();
+const COVER_LEFT_UPPER_ARM = new THREE.Vector3(0.2, -0.95, 0.25).normalize();
+const COVER_LEFT_LOWER_ARM = new THREE.Vector3(-0.45, 0.55, 0.7).normalize();
+/** 張り付き中は銃口を上に向けて胸元で構える */
+const COVER_GUN_PITCH = -1.25;
+
+const tmpDirection = new THREE.Vector3();
+const tmpInverse = new THREE.Quaternion();
+
+/** 骨を、親の座標系で見た方向 direction に向ける */
+function PointBone(bone: THREE.Object3D | null, restDirection: THREE.Vector3, direction: THREE.Vector3): void {
+  if (bone) bone.quaternion.setFromUnitVectors(restDirection, direction);
+}
+
+/** 上腕を向けた後、前腕をモデル空間の方向 direction に向ける */
+function PointLowerArm(upper: THREE.Object3D | null, lower: THREE.Object3D | null, restDirection: THREE.Vector3, direction: THREE.Vector3): void {
+  if (!upper || !lower) return;
+  tmpInverse.copy(upper.quaternion).invert();
+  tmpDirection.copy(direction).applyQuaternion(tmpInverse).normalize();
+  lower.quaternion.setFromUnitVectors(restDirection, tmpDirection);
 }
 
 /** マネキンの Head ボーン相当（首の付け根）の高さ。VRM はこの高さに Head ボーンが来るよう拡大縮小する */
@@ -161,7 +192,7 @@ export class PlayerAvatar {
     hand.getWorldPosition(tmpHandPosition);
     this.root.worldToLocal(tmpHandPosition);
     this.gunPivot.position.copy(tmpHandPosition);
-    this.gunPivot.rotation.set(-state.aimPitch - state.recoil * 2, 0, 0);
+    this.gunPivot.rotation.set(state.isCoverPose ? COVER_GUN_PITCH : -state.aimPitch - state.recoil * 2, 0, 0);
     if (state.reloadProgress >= 0) {
       const reloadTilt = Math.sin(state.reloadProgress * Math.PI);
       this.gunPivot.rotation.x += reloadTilt * 0.6;
@@ -276,6 +307,24 @@ export class PlayerAvatar {
     SetRotation(rig.leftUpperArm, -recoil + reload * 0.5, -1.15, -0.4 - reload * 0.4);
     SetRotation(rig.leftLowerArm, 0, -1.0 + reload * 0.6, 0);
     SetRotation(rig.leftHand, 0, 0, 0);
+
+    if (state.isCoverPose) this.PoseVrmCover(state);
+  }
+
+  /** 壁に背をつけ、銃を胸元で上に向けて構えるポーズ */
+  private PoseVrmCover(state: AvatarPoseState): void {
+    const rig = this.rig!;
+    const crouch = this.crouchAmount;
+    const look = state.coverLook;
+    SetRotation(rig.spine, -0.05 + crouch * 0.2, 0, 0);
+    SetRotation(rig.chest, 0, look * 0.1, 0);
+    SetRotation(rig.upperChest, 0, 0, 0);
+    SetRotation(rig.neck, 0, look * 0.35, 0);
+    SetRotation(rig.head, 0.05, look * 0.55, 0);
+    PointBone(rig.rightUpperArm, RIGHT_ARM_REST_DIRECTION, COVER_RIGHT_UPPER_ARM);
+    PointLowerArm(rig.rightUpperArm, rig.rightLowerArm, RIGHT_ARM_REST_DIRECTION, COVER_RIGHT_LOWER_ARM);
+    PointBone(rig.leftUpperArm, LEFT_ARM_REST_DIRECTION, COVER_LEFT_UPPER_ARM);
+    PointLowerArm(rig.leftUpperArm, rig.leftLowerArm, LEFT_ARM_REST_DIRECTION, COVER_LEFT_LOWER_ARM);
   }
 }
 
@@ -379,6 +428,13 @@ class Mannequin {
     const reload = state.reloadProgress >= 0 ? Math.sin(state.reloadProgress * Math.PI) : 0;
     this.rightArm.rotation.set(0.15 + armPitch, 0.25, 0);
     this.leftArm.rotation.set(0.1 + armPitch + reload * 0.8, -0.5 + reload * 0.3, 0);
+    if (state.isCoverPose) {
+      // 壁に背をつけ、銃を胸元に引き寄せて顔を横に向ける
+      this.torso.rotation.set(crouch * 0.25, state.coverLook * 0.1, 0);
+      this.head.rotation.set(0, state.coverLook * 0.8, 0);
+      this.rightArm.rotation.set(0.9, 0.35, 0);
+      this.leftArm.rotation.set(0.9, -0.55, 0);
+    }
   }
 }
 

@@ -17,6 +17,7 @@ export interface Projectile {
   isFromPlayer: boolean;
   homing: number;
   explosionRadius: number;
+  gravity: number;
   life: number;
   color: number;
 }
@@ -37,6 +38,8 @@ const sphereGeometry = new THREE.SphereGeometry(1, 10, 8);
 const rocketGeometry = new THREE.CylinderGeometry(0.06, 0.06, 0.45, 8);
 rocketGeometry.rotateX(Math.PI / 2);
 const rocketMaterial = new THREE.MeshStandardMaterial({ color: 0x556b2f, emissive: 0x331100 });
+const grenadeGeometry = new THREE.SphereGeometry(0.08, 10, 8);
+const grenadeMaterial = new THREE.MeshStandardMaterial({ color: 0x4a5a2a, emissive: 0x221100 });
 
 /** この水平距離より近づいた追尾弾は直進する */
 const HOMING_STOP_DISTANCE = 5;
@@ -73,13 +76,15 @@ export class ProjectileSystem {
       isFromPlayer: false,
       homing,
       explosionRadius: 0,
+      gravity: 0,
       life: 6,
       color,
     });
   }
 
-  SpawnRocket(origin: THREE.Vector3, direction: THREE.Vector3, speed: number, damage: number, explosionRadius: number): void {
-    const mesh = new THREE.Mesh(rocketGeometry, rocketMaterial);
+  /** 爆発する弾（gravity が 0 ならまっすぐ飛ぶロケット、正ならグレネード） */
+  SpawnExplosive(origin: THREE.Vector3, direction: THREE.Vector3, speed: number, damage: number, explosionRadius: number, gravity: number): void {
+    const mesh = gravity > 0 ? new THREE.Mesh(grenadeGeometry, grenadeMaterial) : new THREE.Mesh(rocketGeometry, rocketMaterial);
     mesh.position.copy(origin);
     mesh.lookAt(origin.clone().add(direction));
     this.scene.add(mesh);
@@ -93,6 +98,7 @@ export class ProjectileSystem {
       isFromPlayer: true,
       homing: 0,
       explosionRadius,
+      gravity,
       life: 5,
       color: 0xffa040,
     });
@@ -175,6 +181,7 @@ export class ProjectileSystem {
         continue;
       }
 
+      projectile.velocity.y -= projectile.gravity * dt;
       projectile.position.addScaledVector(projectile.velocity, dt);
       projectile.mesh.position.copy(projectile.position);
       if (projectile.isFromPlayer) {

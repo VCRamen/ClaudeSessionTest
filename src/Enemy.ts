@@ -130,8 +130,6 @@ export class Enemy {
   /** コウモリが攻撃後に離れている残り時間 */
   private retreatTimer = 0;
   private retreatSide = 1;
-  /** 一度でもプレイヤーを視認したか（未交戦の敵はそのまま接近する） */
-  private hasEngaged = false;
   private lostSightTimer = 0;
   private flankDelay = FLANK_DELAY_MIN;
   private isFlanking = false;
@@ -230,7 +228,6 @@ export class Enemy {
       }
     } else if (this.hasLineOfSight) {
       // 見えている間は持ち場を守る（遠ければ前進、近すぎれば後退、それ以外は小さく左右に揺れるだけ）
-      this.hasEngaged = true;
       this.lostSightTimer = 0;
       if (distance > def.preferredRange * 1.2) {
         if (hasNav) tmpDirection.copy(tmpNavDirection);
@@ -241,12 +238,12 @@ export class Enemy {
         if (distance < def.preferredRange * 0.5) tmpDirection.addScaledVector(toPlayerDirection, -1);
         speedScale = 0.35;
       }
-    } else if (!this.hasEngaged && distance > def.preferredRange) {
-      // 未交戦：射程に入るまではプレイヤーに向かって前進
+    } else if (distance > def.preferredRange * 1.1) {
+      // 射程外で見えない：射程に入るまではプレイヤーに向かって前進（見失った後も同じ）
+      this.lostSightTimer = 0;
       if (hasNav) tmpDirection.copy(tmpNavDirection);
     } else {
       // 射程内なのに見えない＝物陰に隠れている。ここからは回り込み制限の対象
-      this.hasEngaged = true;
       // 見失った：しばらく様子を見てから、回り込み役の枠を得た敵だけ回り込む
       // （回り込み役は倒されるまでその役割を持ち続け、他の敵は正面で待機する）
       if (this.lostSightTimer === 0) this.flankDelay = FLANK_DELAY_MIN + Math.random() * (FLANK_DELAY_MAX - FLANK_DELAY_MIN);

@@ -1,6 +1,6 @@
 // WebAudio で合成する効果音（音声ファイル不要）
 
-import type { WeaponId } from './Weapons';
+import type { WeaponDef } from './Weapons';
 
 export class Sfx {
   private context: AudioContext | null = null;
@@ -25,14 +25,16 @@ export class Sfx {
     for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
   }
 
-  PlayShot(id: WeaponId): void {
-    switch (id) {
+  PlayShot(def: WeaponDef): void {
+    // 1 発の威力が大きい機種ほど重い音にする
+    const power = Math.min(1, def.damage * def.pellets / 150);
+    switch (def.type) {
       case 'handgun':
-        this.Noise(0.12, 2200, 0.5);
-        this.Tone(180, 60, 0.08, 'triangle', 0.4);
+        this.Noise(0.12 + power * 0.25, 2200 - power * 1000, 0.5 + power * 0.4);
+        this.Tone(180, 60, 0.08 + power * 0.15, 'triangle', 0.4);
         break;
       case 'smg':
-        this.Noise(0.07, 3000, 0.35);
+        this.Noise(0.07, 3000 - power * 800, 0.35);
         this.Tone(220, 90, 0.05, 'square', 0.12);
         break;
       case 'shotgun':
@@ -40,14 +42,14 @@ export class Sfx {
         this.Tone(120, 40, 0.2, 'triangle', 0.6);
         break;
       case 'rifle':
-        this.Noise(0.1, 2600, 0.45);
+        this.Noise(0.1 + power * 0.1, 2600 - power * 800, 0.45);
         this.Tone(160, 60, 0.07, 'triangle', 0.3);
         break;
       case 'sniper':
-        this.Noise(0.45, 1500, 0.8);
+        this.Noise(0.35 + power * 0.3, 1600 - power * 700, 0.8);
         this.Tone(90, 30, 0.35, 'sawtooth', 0.35);
         break;
-      case 'rocket':
+      case 'launcher':
         this.Noise(0.5, 700, 0.5);
         this.Tone(300, 80, 0.4, 'sawtooth', 0.15);
         break;

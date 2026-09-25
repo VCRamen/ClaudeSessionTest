@@ -21,6 +21,7 @@ import { Player } from './Player';
 import { BuildWaveComposition, Enemy } from './Enemy';
 import type { EnemyContext, EnemyKind } from './Enemy';
 import { IntersectRaySphere, RaycastColliders } from './Collision';
+import { FindCover } from './Cover';
 import type { ColliderHit } from './Collision';
 import { PickRandomDropWeapon } from './Weapons';
 import type { WeaponId, WeaponInstance } from './Weapons';
@@ -46,6 +47,12 @@ const EXPLOSIVE_BARREL_RADIUS = 4;
 const EXPLOSIVE_BARREL_DAMAGE = 90;
 const MAX_AIM_DISTANCE = 200;
 const LOCK_GRACE_TIME = 0.6;
+const COVER_CAMERA_DISTANCE = 2.3;
+/** 低いカバーに隠れている間の銃の向き（下向きに構える） */
+const LOW_COVER_GUN_PITCH = -0.55;
+const COVER_CAMERA_SHOULDER_OFFSET = 0.8;
+/** 張り付き中、カメラの中心を壁から離す距離 */
+const COVER_CAMERA_PUSH = 0.5;
 /** 単発武器のクリックを先行入力として受け付ける時間 */
 const FIRE_BUFFER_TIME = 0.15;
 
@@ -122,7 +129,13 @@ export class Game {
   private currentFov = CAMERA_FOV;
   private recoilAnimation = 0;
   private fireBufferTimer = 0;
+  private burstWeapon: WeaponInstance | null = null;
+  private burstRemaining = 0;
+  private burstTimer = 0;
   private titleAngle = 0;
+  /** カメラを右肩（+1）／左肩（-1）のどちらに置くか（なめらかに切り替える） */
+  private cameraShoulderSide = 1;
+  private cameraCoverPush = 0;
   private lockRequestTime = 0;
   private lastFrameTime = performance.now();
   private readonly pendingBarrels: PendingBarrel[] = [];
@@ -427,6 +440,7 @@ export class Game {
   private ShowResult(isVictory: boolean): void {
     this.state = 'result';
     this.hud.SetPickupPrompt(null);
+    this.hud.SetCoverPrompt(null);
     this.input.ExitLock();
     const screen = document.getElementById('result-screen')!;
     document.getElementById('result-heading')!.textContent = isVictory ? 'ALL WAVES CLEAR!' : 'GAME OVER';
@@ -486,7 +500,7 @@ export class Game {
     this.avatar.root.rotation.y = 0;
     this.avatar.Update(dt, {
       forwardSpeed: 0, rightSpeed: 0, isCrouching: false, isAiming: false, isSprinting: false,
-      isGrounded: true, aimPitch: 0, reloadProgress: -1, recoil: 0,
+      isGrounded: true, aimPitch: 0, reloadProgress: -1, recoil: 0, isCoverPose: false, coverLook: 0,
     });
     this.camera.position.set(start.x + Math.sin(this.titleAngle) * 3.5, 1.6, start.z + Math.cos(this.titleAngle) * 3.5);
     this.camera.lookAt(start.x, 1.1, start.z);
@@ -512,6 +526,7 @@ export class Game {
 
     this.fireBufferTimer = this.input.isLeftPressed ? FIRE_BUFFER_TIME : Math.max(0, this.fireBufferTimer - dt);
     this.HandleWeaponInput();
+    this.UpdateBurst(dt);
     if (player.UpdateTimers(dt)) this.sfx.PlayReload();
     const weapon = player.GetCurrentWeapon();
     if (weapon && weapon.mag === 0 && !player.IsReloading() && player.fireCooldown <= 0 && player.StartReload()) {
@@ -547,6 +562,7 @@ export class Game {
     this.UpdateAvatar(dt);
     this.UpdateCamera(dt);
     this.UpdateIndicators(dt);
+    this.UpdateCoverPrompt();
     this.UpdateHud(dt);
   }
 
@@ -564,7 +580,10 @@ export class Game {
     if (nearby && nearby.weapon) {
       const color = TIER_CSS_COLORS[Math.min(nearby.weapon.def.tier, TIER_CSS_COLORS.length - 1)];
       this.hud.SetPickupPrompt(
-        `<span class="pickup-name" style="color:${color}">${nearby.weapon.GetDisplayName()}</span><br><b>[1]〜[4]</b> キーでスロットに登録`,
+        `<span class="pickup-name" style="color:${color}">${nearby.weapon.GetDisplayName()}</span>`
+        + `<div class="pickup-desc">${nearby.weapon.def.description}</div>`
+        + `<div class="pickup-stats">${this.FormatWeaponStats(nearby.weapon)}</div>`
+        + `<b>[1]〜[4]</b> キーでスロットに登録`,
       );
       if (slotKey >= 0) {
         const weapon = nearby.weapon;
@@ -588,13 +607,26 @@ export class Game {
     const weapon = player.GetCurrentWeapon();
     if (!weapon) return;
     const wantsToFire = weapon.def.isAuto ? input.isLeftDown : this.fireBufferTimer > 0;
-    if (!wantsToFire || player.fireCooldown > 0 || player.IsReloading()) return;
+    if (!wantsToFire || player.fireCooldown > 0 || player.IsReloading() || !player.CanFire()) return;
     this.fireBufferTimer = 0;
     if (weapon.mag > 0) {
-      this.FireWeapon(weapon);
+      this.PullTrigger(weapon);
     } else if (!player.StartReload()) {
       this.sfx.PlayEmpty();
     }
+  }
+
+  /** 威力・連射・装弾数を 5 段階の目安で表示する */
+  private FormatWeaponStats(weapon: WeaponInstance): string {
+    const def = weapon.def;
+    const damagePerTrigger = weapon.GetDamage() * def.pellets * def.burstCount;
+    const shotsPerSecond = def.burstCount / weapon.GetFireInterval();
+    const Rate = (value: number, thresholds: number[]) => thresholds.filter((threshold) => value >= threshold).length + 1;
+    const Bar = (level: number) => '■'.repeat(level) + '□'.repeat(5 - level);
+    const power = Rate(damagePerTrigger, [20, 40, 80, 150]);
+    const rate = Rate(shotsPerSecond, [1.5, 3, 7, 12]);
+    const mag = Rate(weapon.GetMagSize(), [4, 8, 16, 29]);
+    return `威力 ${Bar(power)}　連射 ${Bar(rate)}　装弾 ${Bar(mag)}`;
   }
 
   private GetCurrentSpread(weapon: WeaponInstance): number {
@@ -608,11 +640,37 @@ export class Game {
     return spread + player.spreadBloom * (player.isAiming ? 0.5 : 1);
   }
 
+  /** 引き金を引いたとき。バースト武器は残りの弾を予約する */
+  private PullTrigger(weapon: WeaponInstance): void {
+    this.player.fireCooldown = weapon.GetFireInterval();
+    this.FireWeapon(weapon);
+    if (weapon.def.burstCount > 1) {
+      this.burstWeapon = weapon;
+      this.burstRemaining = weapon.def.burstCount - 1;
+      this.burstTimer = weapon.def.burstInterval;
+    }
+  }
+
+  /** バーストの 2 発目以降 */
+  private UpdateBurst(dt: number): void {
+    if (this.burstRemaining <= 0 || !this.burstWeapon) return;
+    const weapon = this.burstWeapon;
+    if (weapon !== this.player.GetCurrentWeapon() || this.player.IsReloading() || weapon.mag <= 0) {
+      this.burstRemaining = 0;
+      return;
+    }
+    this.burstTimer -= dt;
+    if (this.burstTimer > 0) return;
+    this.burstTimer = weapon.def.burstInterval;
+    this.burstRemaining--;
+    this.FireWeapon(weapon);
+  }
+
+  /** 1 回分の射撃（弾を 1 発消費する） */
   private FireWeapon(weapon: WeaponInstance): void {
     const player = this.player;
     const def = weapon.def;
     weapon.mag--;
-    player.fireCooldown = weapon.GetFireInterval();
 
     this.avatar.root.updateMatrixWorld(true);
     const muzzle = this.avatar.GetMuzzleWorldPosition(tmpMuzzle).clone();
@@ -623,14 +681,14 @@ export class Game {
     for (let i = 0; i < def.pellets; i++) {
       const direction = this.ApplySpread(baseDirection, spread);
       if (def.isProjectile) {
-        this.projectiles.SpawnRocket(muzzle, direction, def.projectileSpeed, weapon.GetDamage(), def.explosionRadius);
+        this.projectiles.SpawnExplosive(muzzle, direction, def.projectileSpeed, weapon.GetDamage(), def.explosionRadius, def.projectileGravity);
       } else {
         this.FireHitscan(muzzle, direction, weapon);
       }
     }
 
     this.effects.ShowMuzzleFlash(muzzle);
-    this.sfx.PlayShot(def.id);
+    this.sfx.PlayShot(def);
     const kick = def.recoil * (player.isAiming ? 0.6 : 1) * (player.isCrouching ? 0.8 : 1);
     player.pitch += kick;
     player.recoilKick += kick;
@@ -715,7 +773,7 @@ export class Game {
       this.effects.SpawnImpact(wall.point, wall.normal, 0xffd080, 5);
     }
     const end = origin.clone().addScaledVector(direction, endDistance);
-    this.effects.SpawnTracer(origin, end, def.id === 'sniper' ? 0xd0a0ff : 0xfff2b0);
+    this.effects.SpawnTracer(origin, end, def.type === 'sniper' ? 0xd0a0ff : 0xfff2b0);
   }
 
   // ------------------------------------------------------------
@@ -975,16 +1033,19 @@ export class Game {
   // ------------------------------------------------------------
 
   private IsScoped(): boolean {
-    return this.player.isAiming && this.player.GetCurrentWeapon()?.def.id === 'sniper';
+    return this.player.isAiming && this.player.GetCurrentWeapon()?.def.type === 'sniper';
   }
 
   private UpdateAvatar(dt: number): void {
     const player = this.player;
     this.recoilAnimation *= Math.exp(-dt * 12);
     this.avatar.root.position.copy(player.position);
-    this.avatar.root.rotation.y = player.yaw + Math.PI;
+    this.avatar.root.rotation.y = player.GetAvatarYaw();
     this.avatar.root.visible = !this.IsScoped();
     this.avatar.SetWeapon(player.GetCurrentWeapon()?.def.id ?? null);
+    // 高い壁：背をつけるポーズ。低いカバー：遮蔽物の方を向いてしゃがみ、銃を下げて構える
+    const isHidingInCover = player.IsInCover() && !player.isPoppedOut;
+    const isCoverPose = isHidingInCover && !player.cover!.isLow;
     this.avatar.Update(dt, {
       forwardSpeed: player.localForwardSpeed,
       rightSpeed: player.localRightSpeed,
@@ -992,9 +1053,11 @@ export class Game {
       isAiming: player.isAiming,
       isSprinting: player.isSprinting,
       isGrounded: player.isGrounded,
-      aimPitch: player.pitch,
+      aimPitch: isCoverPose ? 0 : isHidingInCover ? LOW_COVER_GUN_PITCH : player.pitch,
       reloadProgress: player.GetReloadProgress(),
       recoil: this.recoilAnimation,
+      isCoverPose,
+      coverLook: player.GetCoverLook(),
     });
   }
 
@@ -1009,16 +1072,30 @@ export class Game {
     this.camera.fov = this.currentFov;
     this.camera.updateProjectionMatrix();
 
-    const targetDistance = isScoped ? 0.1 : player.isAiming ? CAMERA_AIM_DISTANCE : CAMERA_DISTANCE;
+    // 張り付き中は専用カメラ：少し寄って低めに構え、身を乗り出す側の肩越しに見る
+    const cover = player.cover;
+    const isWallPose = cover !== null && !player.isPoppedOut;
+    const targetDistance = isScoped ? 0.1 : player.isAiming ? CAMERA_AIM_DISTANCE : isWallPose ? COVER_CAMERA_DISTANCE : CAMERA_DISTANCE;
     this.cameraDistance += (targetDistance - this.cameraDistance) * blend;
-    const targetHeight = player.isCrouching ? 1.15 : 1.6;
+    const targetHeight = isWallPose ? (cover.isLow ? 1.4 : 1.5) : player.isCrouching ? 1.15 : 1.6;
     this.cameraHeight += (targetHeight - this.cameraHeight) * blend;
 
     const cosPitch = Math.cos(player.pitch);
     tmpLook.set(-Math.sin(player.yaw) * cosPitch, Math.sin(player.pitch), -Math.cos(player.yaw) * cosPitch);
     tmpRight.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+    let targetShoulderSide = 1;
+    if (cover) {
+      // 高い壁に背をつけている間は壁から離れた側の肩越し、それ以外は身を乗り出す側の肩越し
+      const sideDirection = isWallPose && !cover.isLow
+        ? cover.normal
+        : tmpDirection.copy(cover.tangent).multiplyScalar(player.coverSide);
+      targetShoulderSide = sideDirection.x * tmpRight.x + sideDirection.z * tmpRight.z >= 0 ? 1 : -1;
+    }
+    this.cameraShoulderSide += (targetShoulderSide - this.cameraShoulderSide) * (1 - Math.exp(-dt * 8));
+    this.cameraCoverPush += ((isWallPose ? 1 : 0) - this.cameraCoverPush) * blend;
     tmpPivot.set(player.position.x, player.position.y + this.cameraHeight, player.position.z);
-    const shoulder = isScoped ? 0.15 : CAMERA_SHOULDER_OFFSET;
+    if (cover) tmpPivot.addScaledVector(cover.normal, this.cameraCoverPush * COVER_CAMERA_PUSH);
+    const shoulder = (isScoped ? 0.15 : isWallPose ? COVER_CAMERA_SHOULDER_OFFSET : CAMERA_SHOULDER_OFFSET) * this.cameraShoulderSide;
     tmpDesired.copy(tmpPivot).addScaledVector(tmpRight, shoulder).addScaledVector(tmpLook, -this.cameraDistance);
 
     // 壁にめり込まないようにカメラを手前に寄せる
@@ -1039,6 +1116,20 @@ export class Game {
       tmpDesired.z + (Math.random() - 0.5) * shake,
     );
     this.camera.rotation.set(player.pitch, player.yaw, 0);
+  }
+
+  private UpdateCoverPrompt(): void {
+    const player = this.player;
+    const cover = player.cover;
+    if (!cover) {
+      player.GetForward(tmpDirection);
+      const canCover = FindCover(player.position, tmpDirection, this.level.colliders) !== null;
+      this.hud.SetCoverPrompt(canCover ? '<b>[Q]</b> 張り付く' : null);
+    } else if (!cover.isLow && !player.IsAtCoverEdge()) {
+      this.hud.SetCoverPrompt('<b>[A][D]</b> 壁の端まで移動すると身を乗り出せます　<b>[Q]</b> 離れる');
+    } else {
+      this.hud.SetCoverPrompt('<b>[A][D]</b> 壁沿いに移動　<b>[右クリック]</b> 身を乗り出す　<b>[Q]</b> 離れる');
+    }
   }
 
   private UpdateHud(dt: number): void {
