@@ -6,10 +6,10 @@ import { Clamp, HasLineOfSight, PushOutCircle } from './Collision';
 import type { Collider } from './Collision';
 import type { NavGrid } from './NavGrid';
 import type { Perch } from './Level';
-import { BuildBatModel, BuildGhostModel, BuildPumpkinKingModel, BuildPumpkinModel } from './EnemyModels';
+import { BuildBatModel, BuildGhostModel, BuildPumpkinKingModel, BuildPumpkinModel, BuildWitchModel } from './EnemyModels';
 import type { EnemyModel } from './EnemyModels';
 
-export type EnemyKind = 'pumpkin' | 'ghost' | 'bat' | 'boss';
+export type EnemyKind = 'pumpkin' | 'ghost' | 'bat' | 'boss' | 'witch';
 
 export interface HitSphereDef {
   offset: THREE.Vector3;
@@ -35,6 +35,8 @@ export interface EnemyDef {
   projectileSize: number;
   projectileHoming: number;
   projectileCount: number;
+  /** 1 回の攻撃で続けて撃つ回数（魔女は 3 連射） */
+  projectileBurst: number;
   meleeDamage: number;
   reward: number;
   eyeHeight: number;
@@ -46,7 +48,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     kind: 'pumpkin', name: 'パンプキンメイジ', hp: 60, speed: 2.6, radius: 0.45, height: 1.8, flyHeight: 0,
     preferredRange: 13, fireIntervalMin: 2.4, fireIntervalMax: 3.8,
     projectileSpeed: 15, projectileDamage: 8, projectileColor: 0xff6a00, projectileSize: 0.18, projectileHoming: 0,
-    projectileCount: 1, meleeDamage: 0, reward: 15, eyeHeight: 1.4,
+    projectileBurst: 1, projectileCount: 1, meleeDamage: 0, reward: 15, eyeHeight: 1.4,
     hitSpheres: [
       { offset: new THREE.Vector3(0, 0.65, 0), radius: 0.45, damageMultiplier: 1 },
       { offset: new THREE.Vector3(0, 1.38, 0), radius: 0.4, damageMultiplier: 2 },
@@ -56,21 +58,31 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     kind: 'ghost', name: 'ゴースト', hp: 45, speed: 3.4, radius: 0.45, height: 1.2, flyHeight: 1.4,
     preferredRange: 9, fireIntervalMin: 2.0, fireIntervalMax: 3.2,
     projectileSpeed: 9, projectileDamage: 6, projectileColor: 0xb66bff, projectileSize: 0.22, projectileHoming: 1.2,
-    projectileCount: 1, meleeDamage: 0, reward: 20, eyeHeight: 0,
+    projectileBurst: 1, projectileCount: 1, meleeDamage: 0, reward: 20, eyeHeight: 0,
     hitSpheres: [{ offset: new THREE.Vector3(0, -0.1, 0), radius: 0.55, damageMultiplier: 1 }],
   },
   bat: {
     kind: 'bat', name: 'バット', hp: 25, speed: 6.5, radius: 0.35, height: 0.6, flyHeight: 1.5,
     preferredRange: 0, fireIntervalMin: 1.1, fireIntervalMax: 1.5,
     projectileSpeed: 0, projectileDamage: 0, projectileColor: 0, projectileSize: 0, projectileHoming: 0,
-    projectileCount: 0, meleeDamage: 6, reward: 10, eyeHeight: 0,
+    projectileBurst: 1, projectileCount: 0, meleeDamage: 6, reward: 10, eyeHeight: 0,
     hitSpheres: [{ offset: new THREE.Vector3(0, 0, 0), radius: 0.38, damageMultiplier: 1 }],
+  },
+  witch: {
+    kind: 'witch', name: '魔女', hp: 55, speed: 3.0, radius: 0.4, height: 1.8, flyHeight: 0,
+    preferredRange: 14, fireIntervalMin: 2.6, fireIntervalMax: 3.6,
+    projectileSpeed: 11, projectileDamage: 6, projectileColor: 0xb040ff, projectileSize: 0.2, projectileHoming: 0.5,
+    projectileBurst: 3, projectileCount: 1, meleeDamage: 0, reward: 25, eyeHeight: 1.45,
+    hitSpheres: [
+      { offset: new THREE.Vector3(0, 0.6, 0), radius: 0.42, damageMultiplier: 1 },
+      { offset: new THREE.Vector3(0, 1.45, 0), radius: 0.3, damageMultiplier: 2 },
+    ],
   },
   boss: {
     kind: 'boss', name: 'パンプキンキング', hp: 1500, speed: 1.7, radius: 1.1, height: 4, flyHeight: 0,
     preferredRange: 16, fireIntervalMin: 2.0, fireIntervalMax: 2.8,
     projectileSpeed: 13, projectileDamage: 12, projectileColor: 0xff3300, projectileSize: 0.3, projectileHoming: 0,
-    projectileCount: 5, meleeDamage: 0, reward: 300, eyeHeight: 2.9,
+    projectileBurst: 1, projectileCount: 5, meleeDamage: 0, reward: 300, eyeHeight: 2.9,
     hitSpheres: [
       { offset: new THREE.Vector3(0, 1.1, 0), radius: 1.05, damageMultiplier: 1 },
       { offset: new THREE.Vector3(0, 2.9, 0), radius: 0.9, damageMultiplier: 1.5 },
@@ -95,6 +107,11 @@ export interface EnemyContext {
 /** 見失ってから回り込みを始めるまでの待ち時間 */
 const FLANK_DELAY_MIN = 2.0;
 const FLANK_DELAY_MAX = 3.5;
+/** 連射の間隔 */
+const BURST_INTERVAL = 0.2;
+/** 高所から飛び降りるのにかかる時間（魔女はふわりと降りる） */
+const DESCENT_TIME = 0.9;
+const WITCH_DESCENT_TIME = 1.6;
 /** 高所の敵は地上の敵より少しゆっくり撃つ（見つけるまでに時間がかかるため） */
 const PERCH_FIRE_INTERVAL_SCALE = 1.25;
 /** コウモリが噛みついた後に離れている時間 */
@@ -122,8 +139,13 @@ export class Enemy {
   maxHp: number;
   hp: number;
   isAlive = true;
-  /** ベランダなどの高所に陣取っている場合の立ち位置（動かずに撃ってくる） */
-  readonly perch: Perch | null;
+  /** ベランダなどの高所に陣取っている場合の立ち位置（動かずに撃ってくる。降りたら null） */
+  perch: Perch | null;
+  /** 高所から降りている途中の経過時間（降りていなければ負） */
+  private descentElapsed = -1;
+  /** 連射の残り回数と、次の弾までの時間 */
+  private burstRemaining = 0;
+  private burstTimer = 0;
 
   private readonly model: EnemyModel;
   private readonly healthFill: THREE.Mesh;
@@ -164,6 +186,9 @@ export class Enemy {
         break;
       case 'boss':
         this.model = BuildPumpkinKingModel();
+        break;
+      case 'witch':
+        this.model = BuildWitchModel();
         break;
     }
     this.mesh = this.model.group;
@@ -221,7 +246,8 @@ export class Enemy {
     }
 
     if (this.perch) {
-      this.UpdatePerched(dt, distance, toPlayerX, toPlayerZ, context);
+      if (this.descentElapsed >= 0) this.UpdateDescent(dt, toPlayerX, toPlayerZ, context);
+      else this.UpdatePerched(dt, distance, toPlayerX, toPlayerZ, context);
       return;
     }
 
@@ -312,6 +338,43 @@ export class Enemy {
     this.UpdateAttack(dt, distance, context);
   }
 
+  /** 高所から飛び降りて、地上の敵として向かってくる（残りの敵が少なくなったとき） */
+  StartDescent(): void {
+    if (!this.perch || this.descentElapsed >= 0) return;
+    this.descentElapsed = 0;
+    this.burstRemaining = 0;
+  }
+
+  IsDescending(): boolean {
+    return this.descentElapsed >= 0;
+  }
+
+  /** 飛び降りている途中：ベランダから落ちる位置へ放物線を描いて降りる */
+  private UpdateDescent(dt: number, toPlayerX: number, toPlayerZ: number, context: EnemyContext): void {
+    const perch = this.perch!;
+    const duration = this.def.kind === 'witch' ? WITCH_DESCENT_TIME : DESCENT_TIME;
+    this.descentElapsed += dt;
+    const t = Math.min(1, this.descentElapsed / duration);
+    const from = perch.position;
+    const to = perch.dropPosition;
+    this.position.set(from.x + (to.x - from.x) * t, 0, from.z + (to.z - from.z) * t);
+    // 魔女はゆっくり降り、他は一度跳ねてから落ちる
+    const height = this.def.kind === 'witch'
+      ? from.y * (1 - t) * (1 - t * 0.3)
+      : from.y * (1 - t * t) + Math.sin(t * Math.PI) * 0.8;
+    this.mesh.position.set(this.position.x, Math.max(0, height) + this.def.flyHeight, this.position.z);
+    this.mesh.rotation.y = Math.atan2(toPlayerX, toPlayerZ);
+    this.model.Animate(this.time, 1);
+    this.UpdateHealthBar(context);
+    if (t < 1) return;
+    // 着地：ここからは地上の敵と同じように動く
+    this.perch = null;
+    this.descentElapsed = -1;
+    PushOutCircle(this.position, this.def.radius, this.def.height, context.colliders);
+    this.fireTimer = 0.8 + Math.random() * 1.2;
+    this.losTimer = 0;
+  }
+
   /** 高所の敵：その場から動かず、プレイヤーの方を向いて撃つ */
   private UpdatePerched(dt: number, distance: number, toPlayerX: number, toPlayerZ: number, context: EnemyContext): void {
     this.mesh.position.set(this.position.x, this.GetBaseHeight(), this.position.z);
@@ -333,6 +396,7 @@ export class Enemy {
   private UpdateAttack(dt: number, distance: number, context: EnemyContext): void {
     const def = this.def;
     this.fireTimer -= dt;
+    this.UpdateBurst(dt, context);
 
     if (def.kind === 'boss') {
       this.summonTimer -= dt;
@@ -360,7 +424,33 @@ export class Enemy {
     if (!this.hasLineOfSight) return;
     this.fireTimer = def.fireIntervalMin + Math.random() * (def.fireIntervalMax - def.fireIntervalMin);
     if (this.perch) this.fireTimer *= PERCH_FIRE_INTERVAL_SCALE;
+    if (def.projectileBurst > 1) {
+      this.burstRemaining = def.projectileBurst - 1;
+      this.burstTimer = BURST_INTERVAL;
+    }
+    this.FireVolley(distance, context);
+  }
 
+  /** 連射の 2 発目以降（撃つ直前にまだ見えているか確かめる） */
+  private UpdateBurst(dt: number, context: EnemyContext): void {
+    if (this.burstRemaining <= 0) return;
+    this.burstTimer -= dt;
+    if (this.burstTimer > 0) return;
+    this.burstTimer = BURST_INTERVAL;
+    this.burstRemaining--;
+    this.GetEyePosition(tmpEye);
+    if (!HasLineOfSight(tmpEye, context.playerTarget, context.colliders)) {
+      this.burstRemaining = 0;
+      return;
+    }
+    const distance = Math.hypot(context.playerPosition.x - this.position.x, context.playerPosition.z - this.position.z);
+    this.FireVolley(distance, context);
+  }
+
+  /** 1 回分の射撃（扇状に撃つ敵は複数発） */
+  private FireVolley(distance: number, context: EnemyContext): void {
+    const def = this.def;
+    this.GetEyePosition(tmpEye);
     // 距離に応じて狙いをばらつかせる（動き回れば避けられる）
     const inaccuracy = 0.4 + distance * 0.05;
     tmpTarget.set(
@@ -413,6 +503,8 @@ export class Enemy {
         return 0.5;
       case 'boss':
         return 4.5;
+      case 'witch':
+        return 2.35;
     }
   }
 }

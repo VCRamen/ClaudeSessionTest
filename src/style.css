@@ -587,6 +587,11 @@ body {
   font-weight: 800;
 }
 
+.notification.warning {
+  color: #ff9ae6;
+  font-weight: 800;
+}
+
 .notification.pickup {
   color: #8fd8ff;
 }

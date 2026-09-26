@@ -222,3 +222,92 @@ export function BuildPumpkinKingModel(): EnemyModel {
     },
   };
 }
+
+/** 魔女（紫の魔法弾を 3 連射する。ベランダなどの高所に陣取る） */
+export function BuildWitchModel(): EnemyModel {
+  const group = new THREE.Group();
+  const dressMaterial = new THREE.MeshStandardMaterial({ color: 0x3a1650, roughness: 0.85 });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xc8e0b8, roughness: 0.7 });
+  const hatMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1020, roughness: 0.8 });
+  const hairMaterial = new THREE.MeshStandardMaterial({ color: 0x6a2a9a, roughness: 0.7 });
+  const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xc060ff });
+
+  // ドレス（裾の広がったスカートと胴）
+  const skirt = new THREE.Mesh(new THREE.ConeGeometry(0.46, 0.95, 12), dressMaterial);
+  skirt.position.y = 0.48;
+  skirt.castShadow = true;
+  group.add(skirt);
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.45, 10), dressMaterial);
+  body.position.y = 1.1;
+  body.castShadow = true;
+  group.add(body);
+  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.225, 0.225, 0.06, 10), glowMaterial);
+  belt.position.y = 0.92;
+  group.add(belt);
+
+  // 頭・髪・光る目
+  const head = new THREE.Group();
+  head.position.y = 1.48;
+  group.add(head);
+  const face = new THREE.Mesh(new THREE.SphereGeometry(0.18, 14, 10), skinMaterial);
+  face.castShadow = true;
+  head.add(face);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62), hairMaterial);
+  hair.rotation.x = -0.35;
+  hair.position.set(0, 0.02, -0.03);
+  head.add(hair);
+  const backHair = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.55, 10), hairMaterial);
+  backHair.position.set(0, -0.2, -0.1);
+  head.add(backHair);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 4), glowMaterial);
+    eye.position.set(side * 0.065, 0.02, 0.165);
+    head.add(eye);
+  }
+  // とんがり帽子（少し曲がった先端）
+  const hat = new THREE.Group();
+  hat.position.y = 0.13;
+  head.add(hat);
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.03, 20), hatMaterial);
+  hat.add(brim);
+  const crown = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.45, 14), hatMaterial);
+  crown.position.y = 0.23;
+  hat.add(crown);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.25, 8), hatMaterial);
+  tip.position.set(0, 0.52, -0.06);
+  tip.rotation.x = -0.6;
+  hat.add(tip);
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.195, 0.2, 0.06, 14), glowMaterial);
+  band.position.y = 0.05;
+  hat.add(band);
+
+  // 杖（先端の紫の玉が光る）
+  const wand = new THREE.Group();
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.9, 6), new THREE.MeshStandardMaterial({ color: 0x3a2418 }));
+  wand.add(stick);
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 8), glowMaterial);
+  orb.position.y = 0.48;
+  wand.add(orb);
+  wand.position.set(0.32, 1.15, 0.22);
+  wand.rotation.x = 0.5;
+  group.add(wand);
+  // 腕（杖を持つ右腕と、前に差し出した左腕）
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.45, 6), dressMaterial);
+    arm.position.set(side * 0.24, 1.1, 0.1);
+    arm.rotation.x = -0.9;
+    arm.rotation.z = side * -0.3;
+    group.add(arm);
+  }
+
+  return {
+    group,
+    Animate: (time, moveAmount) => {
+      head.rotation.z = Math.sin(time * 2.2) * 0.06;
+      hat.rotation.z = Math.sin(time * 1.7) * 0.08;
+      skirt.rotation.y = Math.sin(time * 3) * 0.1;
+      skirt.position.y = 0.48 + Math.abs(Math.sin(time * 6)) * 0.04 * moveAmount;
+      orb.scale.setScalar(1 + Math.sin(time * 9) * 0.25);
+    },
+  };
+}

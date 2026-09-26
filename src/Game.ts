@@ -45,6 +45,7 @@ const ENEMY_COLORS: Record<EnemyKind, number> = {
   ghost: 0xd0e0ff,
   bat: 0x9b40ff,
   boss: 0xff5010,
+  witch: 0xb040ff,
 };
 const TIER_CSS_COLORS = ['#6ad1ff', '#7dff7d', '#c27dff', '#ffb13d'];
 const WAVE_CLEAR_DELAY = 4;
@@ -59,6 +60,9 @@ const COVER_CAMERA_SHOULDER_OFFSET = 0.8;
 const COVER_CAMERA_PUSH = 0.5;
 /** 単発武器のクリックを先行入力として受け付ける時間 */
 const FIRE_BUFFER_TIME = 0.15;
+/** 張り付き・身を乗り出しの切り替え時に、体の向きをなめらかに回す時間と速さ */
+const AVATAR_TURN_TIME = 0.4;
+const AVATAR_TURN_SPEED = 12;
 
 const tmpMuzzle = new THREE.Vector3();
 const tmpAim = new THREE.Vector3();
@@ -91,6 +95,12 @@ const MAX_PERCHED_ENEMIES = 5;
 const PERCH_MIN_DISTANCE = 12;
 const PERCH_MAX_DISTANCE = 38;
 const PERCH_MIN_SPACING = 5;
+/** 残りの敵（これから出る敵を含む）がこの数以下になったら、高所の敵が降りてくる */
+const PERCH_DESCEND_REMAINING = 5;
+/** 高所に魔女が出てくる最初の Wave と、その割合（ビル街では多め） */
+const WITCH_START_WAVE = 3;
+const WITCH_RATIO = 0.45;
+const WITCH_RATIO_DOWNTOWN = 0.6;
 
 type IndicatorKind = 'damage' | 'threat' | 'perch';
 
@@ -152,6 +162,10 @@ export class Game {
   /** カメラを右肩（+1）／左肩（-1）のどちらに置くか（なめらかに切り替える） */
   private cameraShoulderSide = 1;
   private cameraCoverPush = 0;
+  /** 表示しているキャラの向きと、なめらかに回している残り時間 */
+  private avatarYaw = 0;
+  private avatarTurnTimer = 0;
+  private wasCoverPose = false;
   private lockRequestTime = 0;
   private lastFrameTime = performance.now();
   private readonly pendingBarrels: PendingBarrel[] = [];
@@ -481,8 +495,10 @@ export class Game {
       if (chosen.some((other) => other.position.distanceTo(perch.position) < PERCH_MIN_SPACING)) continue;
       chosen.push(perch);
     }
+    const witchRatio = this.wave < WITCH_START_WAVE ? 0 : STAGES[this.stageIndex].id === 'downtown' ? WITCH_RATIO_DOWNTOWN : WITCH_RATIO;
     for (const perch of chosen) {
-      const enemy = this.AddEnemy('pumpkin', perch.position, perch);
+      const kind: EnemyKind = Math.random() < witchRatio ? 'witch' : 'pumpkin';
+      const enemy = this.AddEnemy(kind, perch.position, perch);
       enemy.GetCenter(tmpCenter);
       this.effects.SpawnBurst(tmpCenter.clone(), 0x9b30ff, 25, 3);
       this.indicators.push({ source: perch.position.clone(), timer: THREAT_INDICATOR_TIME, duration: THREAT_INDICATOR_TIME, kind: 'perch' });
@@ -631,6 +647,7 @@ export class Game {
     }
 
     this.UpdateSpawning(dt);
+    this.UpdatePerchedDescent();
     this.navTimer -= dt;
     if (this.navTimer <= 0) {
       this.navTimer = 0.25;
@@ -1100,6 +1117,18 @@ export class Game {
     this.effects.SpawnBurst(new THREE.Vector3(position.x, 0.5, position.z), 0x9b30ff, 25, 3);
   }
 
+  /** 残りの敵が少なくなったら、高所の敵を降ろしてプレイヤーへ向かわせる（放っておかれないように） */
+  private UpdatePerchedDescent(): void {
+    if (!this.isWaveActive || this.spawnQueue.length + this.enemies.length > PERCH_DESCEND_REMAINING) return;
+    let count = 0;
+    for (const enemy of this.enemies) {
+      if (!enemy.perch || enemy.IsDescending()) continue;
+      enemy.StartDescent();
+      count++;
+    }
+    if (count > 0) this.hud.Notify(`⚠ 高所の敵 ${count} 体が降りてきた！`, 'warning');
+  }
+
   private AddEnemy(kind: EnemyKind, position: THREE.Vector3, perch: Perch | null = null): Enemy {
     const enemy = new Enemy(kind, position, this.wave, perch);
     this.scene.add(enemy.mesh, enemy.healthBar);
@@ -1170,11 +1199,22 @@ export class Game {
     const player = this.player;
     this.recoilAnimation *= Math.exp(-dt * 12);
     this.avatar.root.position.copy(player.position);
-    this.avatar.root.rotation.y = player.GetAvatarYaw();
     this.avatar.root.visible = !this.IsScoped();
     this.avatar.SetWeapon(player.GetCurrentWeapon()?.def.id ?? null);
     // 張り付き中は壁や遮蔽物に背をつけるポーズ（低い遮蔽物ではしゃがむ）
     const isCoverPose = player.IsInCover() && !player.isPoppedOut;
+    // 壁に背をつける ⇔ 身を乗り出して構える、の切り替えでは体をなめらかに回す（それ以外は視点にそのまま合わせる）
+    if (isCoverPose !== this.wasCoverPose) this.avatarTurnTimer = AVATAR_TURN_TIME;
+    this.wasCoverPose = isCoverPose;
+    const targetYaw = player.GetAvatarYaw();
+    if (this.avatarTurnTimer > 0) {
+      this.avatarTurnTimer -= dt;
+      const difference = Math.atan2(Math.sin(targetYaw - this.avatarYaw), Math.cos(targetYaw - this.avatarYaw));
+      this.avatarYaw += difference * (1 - Math.exp(-dt * AVATAR_TURN_SPEED));
+    } else {
+      this.avatarYaw = targetYaw;
+    }
+    this.avatar.root.rotation.y = this.avatarYaw;
     this.avatar.Update(dt, {
       forwardSpeed: player.localForwardSpeed,
       rightSpeed: player.localRightSpeed,

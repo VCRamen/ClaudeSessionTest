@@ -182,14 +182,15 @@ export function BuildSkyline(innerRadius: number, outerRadius: number, count: nu
   return group;
 }
 
-/** 信号機（柱と、通りの上に伸びる腕）。正面（信号の灯る側）が +Z */
+/**
+ * 建物の角の壁に取り付ける信号機（通りの上に伸びる腕）。正面（信号の灯る側）が +Z、腕はローカル -X へ伸びる。
+ * 地面に柱を立てると、角に張り付いて身を乗り出すときの邪魔になるので壁付けにしている
+ */
 export function BuildTrafficLight(armLength: number): THREE.Group {
   const group = new THREE.Group();
   const poleMaterial = GetStandardMaterial(0x6a6e74, 0.5, 0.6);
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 5.2, 8), poleMaterial);
-  pole.position.y = 2.6;
-  pole.castShadow = true;
-  group.add(pole);
+  // 壁への取り付け金具
+  AddBox(group, poleMaterial, 0.3, 0.5, 0.3, 0, 5.0, 0, false);
   AddBox(group, poleMaterial, armLength, 0.1, 0.1, -armLength / 2, 5.0, 0, false);
   const head = AddBox(group, GetStandardMaterial(0x2a2a2e, 0.6), 1.1, 0.4, 0.3, -armLength + 0.8, 4.75, 0, false);
   const lightColors = [0x20ff90, 0x3a3a20, 0x3a1a1a];
@@ -198,9 +199,6 @@ export function BuildTrafficLight(armLength: number): THREE.Group {
     light.position.set(head.position.x - 0.35 + index * 0.35, 4.75, 0.16);
     group.add(light);
   });
-  // 歩行者用信号
-  AddBox(group, GetStandardMaterial(0x2a2a2e, 0.6), 0.35, 0.6, 0.25, 0, 2.6, 0.15, false);
-  AddPlane(group, GetGlowMaterial(0x40c8ff), 0.2, 0.2, 0, 2.7, 0.28);
   return group;
 }
 

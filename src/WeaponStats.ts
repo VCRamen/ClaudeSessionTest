@@ -1,5 +1,6 @@
 // 武器の性能を「能力名：基礎値 + Lv による強化値」の形で表示する
 
+import { GetMagSizeAtLevel } from './Weapons';
 import type { WeaponInstance } from './Weapons';
 
 interface StatLine {
@@ -34,7 +35,7 @@ function GetStatsAtLevel(weapon: WeaponInstance, level: number): StatLine[] {
     suffix: def.burstCount > 1 ? `（${def.burstCount}点バースト）` : undefined,
   });
   lines.push({
-    name: '装弾数', base: def.magSize, current: Math.max(1, Math.round(def.magSize * (1 + 0.15 * bonus))), unit: '発', digits: 0,
+    name: '装弾数', base: def.magSize, current: GetMagSizeAtLevel(def, level), unit: '発', digits: 0,
   });
   lines.push({
     name: 'リロード', base: def.reloadTime, current: def.reloadTime * (1 - 0.08 * bonus), unit: '秒', digits: 2,

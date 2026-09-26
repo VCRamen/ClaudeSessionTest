@@ -140,6 +140,14 @@ const DEFAULT_HEIGHT = 1.65;
 const GUN_OFFSET_IN_HAND = new THREE.Vector3(0, 0.05, 0.03);
 
 const tmpHandPosition = new THREE.Vector3();
+/** 張り付きのポーズと構えのポーズを切り替える速さ（大きいほど速い。約 0.25 秒で切り替わる） */
+const COVER_POSE_BLEND_SPEED = 11;
+/** 張り付きのポーズと構えのポーズを混ぜ合わせる上半身のボーン */
+const COVER_BLEND_BONES = [
+  'spine', 'chest', 'upperChest', 'neck', 'head',
+  'rightUpperArm', 'rightLowerArm', 'rightHand', 'leftUpperArm', 'leftLowerArm', 'leftHand',
+] as const;
+const savedQuaternions = COVER_BLEND_BONES.map(() => new THREE.Quaternion());
 
 interface Rig {
   hips: THREE.Object3D | null;
@@ -189,6 +197,10 @@ export class PlayerAvatar {
   private crouchAmount = 0;
   /** 低い遮蔽物の陰で深くしゃがむ度合い（0〜1） */
   private squatAmount = 0;
+  /** 張り付きのポーズの割合（0 = 構え、1 = 壁に背をつける）。身を乗り出す動きをなめらかにする */
+  private coverAmount = 0;
+  /** 最後に張り付いていたのが低い遮蔽物か（ポーズを戻す途中も同じ腕の形を使う） */
+  private isLowCover = false;
   private airAmount = 0;
   private moveAmount = 0;
   private smoothedForward = 0;
@@ -260,6 +272,8 @@ export class PlayerAvatar {
     const blend = 1 - Math.exp(-dt * 12);
     this.crouchAmount += ((state.isCrouching ? 1 : 0) - this.crouchAmount) * blend;
     this.squatAmount += ((state.isCoverPose && state.isCrouching ? 1 : 0) - this.squatAmount) * blend;
+    this.coverAmount += ((state.isCoverPose ? 1 : 0) - this.coverAmount) * (1 - Math.exp(-dt * COVER_POSE_BLEND_SPEED));
+    if (state.isCoverPose) this.isLowCover = state.isCrouching;
     this.airAmount += ((state.isGrounded ? 0 : 1) - this.airAmount) * blend;
     this.smoothedForward += (state.forwardSpeed - this.smoothedForward) * blend;
     this.smoothedRight += (state.rightSpeed - this.smoothedRight) * blend;
@@ -274,7 +288,7 @@ export class PlayerAvatar {
       this.vrm.update(dt);
     } else {
       this.mannequin.Pose(state, this.walkPhase, this.moveAmount, this.crouchAmount, this.squatAmount, this.airAmount,
-        this.smoothedForward, this.smoothedRight);
+        this.smoothedForward, this.smoothedRight, this.coverAmount, this.isLowCover);
     }
     this.AttachGunToHand(state);
   }
@@ -286,19 +300,17 @@ export class PlayerAvatar {
     hand.getWorldPosition(tmpHandPosition);
     this.root.worldToLocal(tmpHandPosition);
     this.gunPivot.position.copy(tmpHandPosition);
-    if (state.isCoverPose) {
-      const arms = state.isCrouching ? LOW_COVER_ARMS : HIGH_COVER_ARMS;
-      this.gunPivot.rotation.set(arms.gunPitch, arms.gunYaw, 0);
-    } else {
-      // リロード中は銃を上に向け、マガジンの差し込み口が見えるように少しひねる
-      const curve = GetReloadCurve(state.reloadProgress);
-      const aimPitch = -state.aimPitch - state.recoil * 2;
-      this.gunPivot.rotation.set(
-        aimPitch + (RELOAD_GUN_PITCH - aimPitch) * curve.raise + curve.jolt * 0.2,
-        0.35 * curve.raise,
-        0.45 * curve.raise,
-      );
-    }
+    // リロード中は銃を上に向け、マガジンの差し込み口が見えるように少しひねる
+    const reloadCurve = GetReloadCurve(state.isCoverPose ? -1 : state.reloadProgress);
+    const aimPitch = -state.aimPitch - state.recoil * 2;
+    const arms = this.isLowCover ? LOW_COVER_ARMS : HIGH_COVER_ARMS;
+    const cover = this.coverAmount;
+    // 張り付きの構え ⇔ 狙う構えの間をなめらかに移る
+    this.gunPivot.rotation.set(
+      THREE.MathUtils.lerp(aimPitch + (RELOAD_GUN_PITCH - aimPitch) * reloadCurve.raise + reloadCurve.jolt * 0.2, arms.gunPitch, cover),
+      THREE.MathUtils.lerp(0.35 * reloadCurve.raise, arms.gunYaw, cover),
+      THREE.MathUtils.lerp(0.45 * reloadCurve.raise, 0, cover),
+    );
 
     // 左手に持った新しいマガジン
     const curve = GetReloadCurve(state.isCoverPose ? -1 : state.reloadProgress);
@@ -425,8 +437,8 @@ export class PlayerAvatar {
     SetRotation(rig.leftLowerArm, 0, -1.0, 0);
     SetRotation(rig.leftHand, 0, 0, 0);
 
-    if (state.isCoverPose) this.PoseVrmCover(state);
-    else this.PoseVrmReload(state);
+    if (!state.isCoverPose) this.PoseVrmReload(state);
+    this.BlendVrmCoverPose(state);
     if (this.isVrm0) this.ConvertPoseToVrm0();
   }
 
@@ -442,12 +454,29 @@ export class PlayerAvatar {
     BlendArmTowards(rig.leftUpperArm, rig.leftLowerArm, LEFT_ARM_REST_DIRECTION, tmpUpperTarget, tmpLowerTarget, curve.raise);
   }
 
+  /** 構えのポーズ（いまのボーンの回転）と張り付きのポーズを coverAmount の割合で混ぜる */
+  private BlendVrmCoverPose(state: AvatarPoseState): void {
+    const amount = this.coverAmount;
+    if (amount < 0.001) return;
+    const rig = this.rig!;
+    COVER_BLEND_BONES.forEach((name, index) => {
+      const bone = rig[name];
+      if (bone) savedQuaternions[index].copy(bone.quaternion);
+    });
+    this.PoseVrmCover(state);
+    if (amount > 0.999) return;
+    COVER_BLEND_BONES.forEach((name, index) => {
+      const bone = rig[name];
+      if (bone) bone.quaternion.slerpQuaternions(savedQuaternions[index], bone.quaternion.clone(), amount);
+    });
+  }
+
   /** 壁に背をつけるポーズ（高い壁は立って銃を顔の横に、低い遮蔽物はしゃがんで銃を斜めに抱える） */
   private PoseVrmCover(state: AvatarPoseState): void {
     const rig = this.rig!;
     const crouch = this.crouchAmount;
     const look = state.coverLook;
-    const arms = state.isCrouching ? LOW_COVER_ARMS : HIGH_COVER_ARMS;
+    const arms = this.isLowCover ? LOW_COVER_ARMS : HIGH_COVER_ARMS;
     SetRotation(rig.spine, -0.08 + crouch * 0.25, 0, 0);
     SetRotation(rig.chest, 0, look * 0.15, 0);
     SetRotation(rig.upperChest, 0, 0, 0);
@@ -554,6 +583,8 @@ class Mannequin {
     air: number,
     forwardSpeed: number,
     rightSpeed: number,
+    coverAmount: number,
+    isLowCover: boolean,
   ): void {
     const speed = Math.max(0.01, Math.hypot(forwardSpeed, rightSpeed));
     const forwardRatio = forwardSpeed / speed;
@@ -584,16 +615,23 @@ class Mannequin {
       -0.5 + (leftYaw + 0.5) * curve.raise,
       0,
     );
-    if (state.isCoverPose) {
-      // 壁に背をつけて顔を横に向ける。高い壁は銃を顔の横に、低い遮蔽物は体の前に構える
-      this.torso.rotation.set(crouch * 0.25 - 0.05, state.coverLook * 0.15, 0);
-      this.head.rotation.set(0, state.coverLook * 0.8, 0);
-      if (state.isCrouching) {
-        this.rightArm.rotation.set(0.7, 0.3, 0);
-        this.leftArm.rotation.set(0.3, -0.6, 0);
+    if (coverAmount > 0.001) {
+      // 壁に背をつけて顔を横に向ける。高い壁は銃を顔の横に、低い遮蔽物は体の前に構える（構えとの間はなめらかに移る）
+      const Blend = (object: THREE.Object3D, x: number, y: number, z: number) => {
+        object.rotation.set(
+          THREE.MathUtils.lerp(object.rotation.x, x, coverAmount),
+          THREE.MathUtils.lerp(object.rotation.y, y, coverAmount),
+          THREE.MathUtils.lerp(object.rotation.z, z, coverAmount),
+        );
+      };
+      Blend(this.torso, crouch * 0.25 - 0.05, state.coverLook * 0.15, 0);
+      Blend(this.head, 0, state.coverLook * 0.8, 0);
+      if (isLowCover) {
+        Blend(this.rightArm, 0.7, 0.3, 0);
+        Blend(this.leftArm, 0.3, -0.6, 0);
       } else {
-        this.rightArm.rotation.set(-0.7, 0.2, 0);
-        this.leftArm.rotation.set(-0.2, -0.7, 0);
+        Blend(this.rightArm, -0.7, 0.2, 0);
+        Blend(this.leftArm, -0.2, -0.7, 0);
       }
     }
   }

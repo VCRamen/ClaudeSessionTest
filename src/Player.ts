@@ -18,8 +18,17 @@ const PITCH_MIN = -1.2;
 const PITCH_MAX = 1.1;
 /** 壁の端から何 m 以内なら「端にいる」（身を乗り出せる） */
 const COVER_EDGE_DISTANCE = 0.45;
-/** 身を乗り出してから撃てるまでの時間 */
-const POP_OUT_READY_TIME = 0.12;
+/** 身を乗り出してから撃てるまでの時間（身を乗り出して構えるモーションが終わるころ） */
+const POP_OUT_READY_TIME = 0.22;
+/** 身を乗り出す・戻る速さ（大きいほど速い） */
+const PEEK_SPEED = 9;
+/** 張り付き中の、壁の面からキャラの中心までの距離（背中が壁に触れるくらい。移動時の半径より近い） */
+const COVER_WALL_GAP = 0.17;
+/**
+ * 壁の端から、張り付いたキャラの中心をどれだけ内側に留めるか。
+ * 当たり判定（半径 0.3m）が角からはみ出して、正面から撃たれないようにする
+ */
+const COVER_END_MARGIN = 0.33;
 /** 壁から離れる入力をこの時間続けるとカバーを解除 */
 const COVER_EXIT_HOLD_TIME = 0.2;
 
@@ -214,7 +223,7 @@ export class Player {
     if (!spot) return false;
     this.cover = spot;
     const t = this.position.x * spot.tangent.x + this.position.z * spot.tangent.z;
-    this.coverT = Clamp(t, spot.minT + 0.05, spot.maxT - 0.05);
+    this.coverT = Player.ClampCoverT(t, spot);
     this.coverSide = this.forward.dot(spot.tangent) >= 0 ? 1 : -1;
     this.velocity.set(0, 0, 0);
     this.isCrouchToggled = false;
@@ -223,6 +232,12 @@ export class Player {
     this.coverBlockedSide = 0;
     this.StartCoverCameraAssist();
     return true;
+  }
+
+  /** 壁沿いの位置を、キャラの体が壁の端からはみ出さない範囲に収める（短い物は真ん中） */
+  private static ClampCoverT(t: number, cover: CoverSpot): number {
+    const margin = Math.min(COVER_END_MARGIN, (cover.maxT - cover.minT) / 2);
+    return Clamp(t, cover.minT + margin, cover.maxT - margin);
   }
 
   ExitCover(): void {
@@ -354,17 +369,17 @@ export class Player {
       const speed = cover.isLow ? CROUCH_SPEED : WALK_SPEED * 0.6;
       this.coverT += Math.sign(along) * speed * dt;
     }
-    this.coverT = Clamp(this.coverT, cover.minT + 0.05, cover.maxT - 0.05);
+    this.coverT = Player.ClampCoverT(this.coverT, cover);
     const intendedT = this.coverT;
 
     // 高い壁から身を乗り出す：角なら横へ回り込み、物で行き止まりなら壁から一歩離れる
     const peekTarget = this.isPoppedOut && !cover.isLow ? 1 : 0;
-    this.peekAmount += (peekTarget - this.peekAmount) * (1 - Math.exp(-dt * 14));
+    this.peekAmount += (peekTarget - this.peekAmount) * (1 - Math.exp(-dt * PEEK_SPEED));
     const isCorner = this.IsAtCoverCorner();
     const edgeT = this.coverSide > 0 ? cover.maxT : cover.minT;
     const peekT = isCorner ? edgeT + this.coverSide * (PLAYER_RADIUS + 0.35) : this.coverT;
     const t = this.coverT + (peekT - this.coverT) * this.peekAmount;
-    const offset = cover.faceDistance + PLAYER_RADIUS + 0.03 + this.peekAmount * (isCorner ? 0.25 : 0.75);
+    const offset = cover.faceDistance + COVER_WALL_GAP + this.peekAmount * (isCorner ? 0.45 : 0.95);
 
     const previousX = this.position.x;
     const previousZ = this.position.z;

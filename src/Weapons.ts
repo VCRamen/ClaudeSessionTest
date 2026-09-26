@@ -25,6 +25,8 @@ export interface WeaponDef {
   damage: number;
   fireInterval: number;
   magSize: number;
+  /** レベルが上がっても装弾数が増えない（ダブルバレルは銃身が 2 本なので常に 2 発） */
+  isMagSizeFixed: boolean;
   maxReserve: number;
   reloadTime: number;
   pellets: number;
@@ -67,7 +69,7 @@ const TYPE_DEFAULTS: Record<WeaponType, Partial<WeaponDef>> = {
 
 function Define(spec: WeaponSpec): WeaponDef {
   return {
-    pellets: 1, spread: 0.02, aimSpreadMultiplier: 0.5, isAuto: false, burstCount: 1, burstInterval: 0,
+    pellets: 1, isMagSizeFixed: false, spread: 0.02, aimSpreadMultiplier: 0.5, isAuto: false, burstCount: 1, burstInterval: 0,
     range: 80, falloffStart: 30, pierce: 1, isProjectile: false, projectileSpeed: 0, projectileGravity: 0,
     explosionRadius: 0, aimFov: 55, maxScopeMagnification: 6, recoil: 0.01, color: 0x777788,
     ...TYPE_DEFAULTS[spec.type],
@@ -109,7 +111,7 @@ export const WEAPON_DEFS: Record<WeaponId, WeaponDef> = {
   }),
   doubleBarrel: Define({
     id: 'doubleBarrel', type: 'shotgun', name: 'ダブルバレル', description: '2 連発の超火力。すぐ弾切れする', tier: 1,
-    damage: 15, fireInterval: 0.25, magSize: 2, maxReserve: 30, reloadTime: 1.6, pellets: 12, spread: 0.11, recoil: 0.07, color: 0x6a4028,
+    damage: 15, fireInterval: 0.25, magSize: 2, isMagSizeFixed: true, maxReserve: 30, reloadTime: 1.6, pellets: 12, spread: 0.11, recoil: 0.07, color: 0x6a4028,
   }),
   autoShotgun: Define({
     id: 'autoShotgun', type: 'shotgun', name: 'オートショットガン', description: '連射できるショットガン', tier: 2,
@@ -153,6 +155,12 @@ export const WEAPON_DEFS: Record<WeaponId, WeaponDef> = {
     explosionRadius: 3.6, recoil: 0.04, color: 0x5a7a3a,
   }),
 };
+
+/** レベルに応じた装弾数（1 レベルごとに +15%。装弾数が固定の機種はそのまま） */
+export function GetMagSizeAtLevel(def: WeaponDef, level: number): number {
+  if (def.isMagSizeFixed) return def.magSize;
+  return Math.max(1, Math.round(def.magSize * (1 + 0.15 * (level - 1))));
+}
 
 /** Wave 番号に応じてドロップしうる最大 tier */
 export function GetMaxDropTier(wave: number): number {
@@ -203,7 +211,7 @@ export class WeaponInstance {
   }
 
   GetMagSize(): number {
-    return Math.max(1, Math.round(this.def.magSize * (1 + 0.15 * (this.level - 1))));
+    return GetMagSizeAtLevel(this.def, this.level);
   }
 
   GetReloadTime(): number {

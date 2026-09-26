@@ -44,9 +44,17 @@ const PERCH_DROP_OFFSET = 2.3;
 /** 敵が陣取るベランダの高さの上限（これより上の階は見上げても狙いにくいので使わない） */
 const PERCH_MAX_HEIGHT = 8;
 /** 大通りの街灯の位置 (u, v) と電柱の v（商店街のみ）。ベランダがぶつからないように先に決めておく */
-const LAMP_SPOTS: [number, number][] = [[-4.6, 6.5], [4.6, 22.8], [-4.6, 36], [4.6, 48]];
+/**
+ * 柱は歩道の車道寄り（縁石の近く）に立てる。壁から 1m あけておくと、壁に張り付いたまま柱の横を通って角まで行ける
+ */
+const LAMP_SPOTS: [number, number][] = [[-3.85, 6.5], [3.85, 22.8], [-3.85, 36], [3.85, 48]];
 const POLE_DISTANCES = [18.5, 28.5, 41, 54];
-const POLE_OFFSET = 4.75;
+const POLE_OFFSET = 3.9;
+/**
+ * 建物の角からこの距離以内には柱（街灯・電柱・信号機）を立てない。
+ * 角に張り付いて身を乗り出したときに、柱にぶつかって顔を出せなくなるため
+ */
+const CORNER_CLEARANCE = 2.2;
 
 /** 4 本の大通り（北・南・西・東）。along は中心から外へ向かう方向 */
 const ARMS = [
@@ -112,7 +120,10 @@ interface PropPlacement {
   facing?: [number, number];
 }
 
-/** 大通りの小物（2 パターンを交互に使う）。路地の入口（v = 13〜18）の歩道はあけておく */
+/**
+ * 大通りの小物（2 パターンを交互に使う）。路地の入口（v = 13〜18）の歩道はあけておく。
+ * 建物の角の近く（2m 以内）の壁際には物を置かない（角まで張り付いて身を乗り出せるように）
+ */
 const SHOPPING_ARM_LAYOUTS: PropPlacement[][] = [
   [
     { kind: 'planter', x: -2.6, y: 8, size: 2.2, isRotated: true },
@@ -123,11 +134,11 @@ const SHOPPING_ARM_LAYOUTS: PropPlacement[][] = [
     { kind: 'crates', x: -2.2, y: 24.5, size: 3 },
     { kind: 'bench', x: -4.6, y: 20.5 },
     { kind: 'bicycle', x: 4.5, y: 25 },
-    { kind: 'chalkboard', x: -4.2, y: 10.5 },
+    { kind: 'chalkboard', x: -4.2, y: 11.8 },
     { kind: 'manhole', x: 0.8, y: 19 },
     { kind: 'barrel', x: 4.3, y: 21.8 },
     { kind: 'barrel', x: -4.3, y: 27.5 },
-    { kind: 'propane', x: -4.2, y: 12 },
+    { kind: 'propane', x: -4.2, y: 10 },
   ],
   [
     { kind: 'planter', x: 2.6, y: 8.5, size: 2.2, isRotated: true },
@@ -139,11 +150,11 @@ const SHOPPING_ARM_LAYOUTS: PropPlacement[][] = [
     { kind: 'bench', x: 4.6, y: 21 },
     { kind: 'bicycle', x: -4.5, y: 24.5 },
     { kind: 'bicycle', x: -4.5, y: 25.4 },
-    { kind: 'chalkboard', x: 4.2, y: 11.5 },
+    { kind: 'chalkboard', x: 4.2, y: 11.8 },
     { kind: 'manhole', x: -0.8, y: 20 },
     { kind: 'barrel', x: -4.3, y: 23 },
     { kind: 'barrel', x: 4.3, y: 27.5 },
-    { kind: 'propane', x: 4.2, y: 11.5 },
+    { kind: 'propane', x: 4.2, y: 10 },
   ],
 ];
 
@@ -156,15 +167,16 @@ const DOWNTOWN_ARM_LAYOUT: PropPlacement[] = [
   { kind: 'planter', x: 2.6, y: 20.5, size: 2.2, isRotated: true },
   { kind: 'car', x: -2.6, y: 19.5, isRotated: true },
   { kind: 'crates', x: -2.2, y: 24.8, size: 3 },
-  { kind: 'bench', x: 4.6, y: 25.5 },
-  { kind: 'chalkboard', x: -4.2, y: 10.5 },
+  { kind: 'bench', x: 4.6, y: 27 },
+  { kind: 'chalkboard', x: -4.2, y: 11.8 },
   { kind: 'manhole', x: 1.2, y: 17.2 },
   { kind: 'cone', x: 0.5, y: 16.6 },
   { kind: 'cone', x: 1.9, y: 16.7 },
   { kind: 'cone', x: 1.2, y: 18.1 },
-  { kind: 'barrel', x: 4.3, y: 21.8 },
+  // 広場の角（v = 22）に近づけすぎない
+  { kind: 'barrel', x: 4.3, y: 24.2 },
   { kind: 'barrel', x: -4.3, y: 27.5 },
-  { kind: 'propane', x: -4.2, y: 12 },
+  { kind: 'propane', x: -4.2, y: 10 },
 ];
 
 /** ステージごとの大通りの小物（腕ごとに順番に使う） */
@@ -182,7 +194,7 @@ const QUADRANT_PROPS: Record<QuadrantKind, PropPlacement[]> = {
     { kind: 'barrel', x: 16.9, y: 6.8 },
     { kind: 'garbage', x: 16.8, y: 12.2 },
     { kind: 'crates', x: 9, y: 15.5, size: 3, isRotated: true },
-    { kind: 'barrel', x: 6.6, y: 16.9 },
+    { kind: 'barrel', x: 10.5, y: 16.9 },
     { kind: 'bicycle', x: 11.4, y: 14.1, isRotated: true },
     { kind: 'crates', x: 23, y: 14.5, size: 3, isRotated: true },
     { kind: 'propane', x: 27, y: 13.1 },
@@ -213,7 +225,7 @@ const QUADRANT_PROPS: Record<QuadrantKind, PropPlacement[]> = {
     { kind: 'car', x: 16.5, y: 24.5 },
     { kind: 'car', x: 27.5, y: 24.5 },
     { kind: 'car', x: 19.5, y: 9, isRotated: true },
-    { kind: 'parkingMeter', x: 14.2, y: 6.2, facing: [1, 0] },
+    { kind: 'parkingMeter', x: 14.2, y: 9, facing: [1, 0] },
     { kind: 'vending', x: 23.55, y: 7.2, facing: [-1, 0] },
     { kind: 'crates', x: 22, y: 21.5, size: 3, isRotated: true },
     { kind: 'barrel', x: 13.8, y: 19.5 },
@@ -226,9 +238,9 @@ const QUADRANT_PROPS: Record<QuadrantKind, PropPlacement[]> = {
     { kind: 'barrel', x: 16.9, y: 6.8 },
     { kind: 'garbage', x: 16.8, y: 12.2 },
     { kind: 'crates', x: 9, y: 15.5, size: 3, isRotated: true },
-    { kind: 'barrel', x: 6.6, y: 16.9 },
+    { kind: 'barrel', x: 10.5, y: 16.9 },
     { kind: 'cone', x: 11.4, y: 14.1 },
-    { kind: 'cone', x: 11.6, y: 16.4 },
+    { kind: 'cone', x: 11.8, y: 14.8 },
     { kind: 'crates', x: 23, y: 14.5, size: 3, isRotated: true },
     { kind: 'propane', x: 27, y: 13.1 },
     { kind: 'garbage', x: 20, y: 15.9 },
@@ -314,6 +326,11 @@ export class Level {
   private readonly isDowntown: boolean;
   /** 大通りに立つ柱（街灯・電柱）の位置。ベランダを付けない場所の判定に使う */
   private readonly streetPoles: THREE.Vector3[] = [];
+  /** 腕ごとの街灯・電柱の v（建物の角を避けてずらしたもの） */
+  private readonly lampDistances: number[][] = [];
+  private readonly poleDistances: number[][] = [];
+  /** 歩ける場所に面した建物の角（マップ内のもの） */
+  private readonly buildingCorners: THREE.Vector3[] = [];
   private styleIndex = 0;
   private time = 0;
 
@@ -483,12 +500,36 @@ export class Level {
 
   /** 大通りの街灯・電柱の位置を集める */
   private CollectStreetPoles(): void {
+    for (const block of this.blocks) {
+      for (const x of [block.minX, block.maxX]) {
+        for (const z of [block.minZ, block.maxZ]) {
+          if (Math.abs(x) <= MAP_HALF_SIZE + 1 && Math.abs(z) <= MAP_HALF_SIZE + 1) this.buildingCorners.push(new THREE.Vector3(x, 0, z));
+        }
+      }
+    }
     ARMS.forEach((along, armIndex) => {
-      for (const [u, v] of LAMP_SPOTS) this.streetPoles.push(Level.ArmToWorld(along, u, v));
-      if (this.isDowntown) return;
+      const lamps = LAMP_SPOTS.map(([u, v]) => this.AvoidBuildingCorners(along, u, v));
+      this.lampDistances.push(lamps);
+      LAMP_SPOTS.forEach(([u], index) => this.streetPoles.push(Level.ArmToWorld(along, u, lamps[index])));
       const poleSide = armIndex % 2 === 0 ? 1 : -1;
-      for (const v of POLE_DISTANCES) this.streetPoles.push(Level.ArmToWorld(along, poleSide * POLE_OFFSET, v));
+      const poles = POLE_DISTANCES.map((v) => this.AvoidBuildingCorners(along, poleSide * POLE_OFFSET, v));
+      this.poleDistances.push(poles);
+      if (this.isDowntown) return;
+      for (const v of poles) this.streetPoles.push(Level.ArmToWorld(along, poleSide * POLE_OFFSET, v));
     });
+  }
+
+  /** 大通りの (u, v) に立てる柱が建物の角に近ければ、通りに沿ってずらした v を返す */
+  private AvoidBuildingCorners(along: THREE.Vector3, u: number, v: number): number {
+    const IsClear = (candidate: number) => {
+      const position = Level.ArmToWorld(along, u, candidate);
+      return this.buildingCorners.every((corner) => Math.hypot(corner.x - position.x, corner.z - position.z) >= CORNER_CLEARANCE);
+    };
+    for (let offset = 0; offset <= 5; offset += 0.25) {
+      if (IsClear(v + offset)) return v + offset;
+      if (IsClear(v - offset)) return v - offset;
+    }
+    return v;
   }
 
   private BuildGround(): void {
@@ -714,7 +755,8 @@ export class Level {
       }
 
       // 街灯（マップ内の 1 本だけ本物の光源を持つ）。ビル街ではハロウィンのバナーを吊るす
-      LAMP_SPOTS.forEach(([u, v], index) => {
+      LAMP_SPOTS.forEach(([u], index) => {
+        const v = this.lampDistances[armIndex][index];
         const lamp = BuildStreetLamp();
         const position = Level.ArmToWorld(along, u, v);
         lamp.position.copy(position);
@@ -743,7 +785,7 @@ export class Level {
       }
 
       // 電柱と電線
-      const poleDistances = POLE_DISTANCES;
+      const poleDistances = this.poleDistances[armIndex];
       const poleSide = armIndex % 2 === 0 ? 1 : -1;
       const polePositions = poleDistances.map((v) => {
         const pole = BuildUtilityPole();
@@ -917,15 +959,13 @@ export class Level {
       this.AddColliderBox(x, z, 1.0, 1.0, 1.2);
     }
     if (this.isDowntown) {
-      // 交差点の四隅の信号機（腕は通りの上へ伸びる）
+      // 交差点の四隅の建物の角に、壁付けの信号機（腕は通りの上へ伸びる。地面には何も置かない）
       ARMS.forEach((along) => {
-        const position = Level.ArmToWorld(along, -4.55, 4.55);
-        const light = BuildTrafficLight(3.2);
-        light.position.copy(position);
+        const light = BuildTrafficLight(3.6);
+        light.position.copy(Level.ArmToWorld(along, -MAIN_HALF_WIDTH, MAIN_HALF_WIDTH));
         // 信号の正面（+Z）を通りの先へ向ける。腕（ローカル -X）は across 側＝通りの中央へ伸びる
         light.rotation.y = Level.FacingRotation(along);
         this.group.add(light);
-        this.AddColliderBox(position.x, position.z, 0.25, 0.25, 5.2);
       });
       return;
     }
