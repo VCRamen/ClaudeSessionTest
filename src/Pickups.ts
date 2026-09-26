@@ -19,7 +19,16 @@ export interface Pickup {
   baseColor: number;
   glowMaterial: THREE.MeshBasicMaterial;
   beamMaterial: THREE.MeshBasicMaterial;
+  /** 高所から落ちている途中なら、落ち始めた位置（着地すると null。落ちている間は拾えない） */
+  fallStart: THREE.Vector3 | null;
+  fallElapsed: number;
+  fallDuration: number;
 }
+
+/** 落ちてくるアイテムにかかる重力 */
+const FALL_GRAVITY = 14;
+/** 浮いているアイテムの中心の高さ */
+const FLOAT_HEIGHT = 0.6;
 
 const BONUS_COLOR = 0xffd34d;
 
@@ -52,19 +61,25 @@ export class PickupManager {
     this.scene = scene;
   }
 
-  SpawnWeapon(position: THREE.Vector3, weapon: WeaponInstance): void {
+  /** fallFrom を渡すと、その位置から position（地面）へ落ちてくる */
+  SpawnWeapon(position: THREE.Vector3, weapon: WeaponInstance, fallFrom: THREE.Vector3 | null = null): void {
     const color = TIER_COLORS[Math.min(weapon.def.tier, TIER_COLORS.length - 1)];
     const content = BuildGunMesh(weapon.def.id);
     content.scale.setScalar(1.6);
-    this.Spawn('weapon', position, content, color, weapon);
+    this.Spawn('weapon', position, content, color, weapon, fallFrom);
   }
 
-  SpawnHealth(position: THREE.Vector3): void {
-    this.Spawn('health', position, BuildHealthMesh(), 0x33dd66, null);
+  SpawnHealth(position: THREE.Vector3, fallFrom: THREE.Vector3 | null = null): void {
+    this.Spawn('health', position, BuildHealthMesh(), 0x33dd66, null, fallFrom);
   }
 
-  SpawnAmmo(position: THREE.Vector3): void {
-    this.Spawn('ammo', position, BuildAmmoMesh(), 0xd8b030, null);
+  SpawnAmmo(position: THREE.Vector3, fallFrom: THREE.Vector3 | null = null): void {
+    this.Spawn('ammo', position, BuildAmmoMesh(), 0xd8b030, null, fallFrom);
+  }
+
+  /** 地面に落ちていて拾える状態か */
+  static IsLanded(pickup: Pickup): boolean {
+    return pickup.fallStart === null;
   }
 
   Remove(pickup: Pickup): void {
@@ -83,7 +98,7 @@ export class PickupManager {
     let best: Pickup | null = null;
     let bestDistance = range;
     for (const pickup of this.pickups) {
-      if (pickup.kind !== 'weapon' || IsExcluded?.(pickup)) continue;
+      if (pickup.kind !== 'weapon' || !PickupManager.IsLanded(pickup) || IsExcluded?.(pickup)) continue;
       const distance = Math.hypot(pickup.position.x - position.x, pickup.position.z - position.z);
       if (distance < bestDistance) {
         bestDistance = distance;
@@ -105,7 +120,8 @@ export class PickupManager {
       }
       const content = pickup.mesh.children[0];
       content.rotation.y += dt * 1.8;
-      content.position.y = 0.6 + Math.sin(this.time * 3 + pickup.spin) * 0.1;
+      content.position.y = FLOAT_HEIGHT + Math.sin(this.time * 3 + pickup.spin) * 0.1;
+      if (pickup.fallStart) this.UpdateFall(pickup, content, dt);
       if (pickup.kind === 'weapon') {
         const isBonus = IsBonus(pickup);
         const color = isBonus ? BONUS_COLOR : pickup.baseColor;
@@ -119,7 +135,27 @@ export class PickupManager {
     }
   }
 
-  private Spawn(kind: PickupKind, position: THREE.Vector3, content: THREE.Group, color: number, weapon: WeaponInstance | null): void {
+  /** 高所から落ちてくる途中の動き（地面の輪は着地点に出したまま、中身だけが落ちてくる） */
+  private UpdateFall(pickup: Pickup, content: THREE.Object3D, dt: number): void {
+    const start = pickup.fallStart!;
+    pickup.fallElapsed += dt;
+    const t = Math.min(1, pickup.fallElapsed / pickup.fallDuration);
+    const height = Math.max(0, start.y - FLOAT_HEIGHT);
+    content.position.x = (start.x - pickup.position.x) * (1 - t);
+    content.position.z = (start.z - pickup.position.z) * (1 - t);
+    content.position.y = FLOAT_HEIGHT + height * (1 - t * t);
+    content.rotation.x += dt * 6;
+    if (t >= 1) {
+      pickup.fallStart = null;
+      content.position.set(0, FLOAT_HEIGHT, 0);
+      content.rotation.x = 0;
+    }
+  }
+
+  private Spawn(
+    kind: PickupKind, position: THREE.Vector3, content: THREE.Group, color: number, weapon: WeaponInstance | null,
+    fallFrom: THREE.Vector3 | null,
+  ): void {
     const group = new THREE.Group();
     group.add(content);
     const glowMaterial = new THREE.MeshBasicMaterial({
@@ -144,6 +180,8 @@ export class PickupManager {
       group.add(beam);
     }
     group.position.set(position.x, 0, position.z);
+    // 落ちてくるものは、最初のフレームから落ち始める位置に置く
+    if (fallFrom) content.position.set(fallFrom.x - position.x, fallFrom.y, fallFrom.z - position.z);
     this.scene.add(group);
     this.pickups.push({
       kind,
@@ -155,6 +193,10 @@ export class PickupManager {
       baseColor: color,
       glowMaterial,
       beamMaterial,
+      fallStart: fallFrom ? fallFrom.clone() : null,
+      fallElapsed: 0,
+      // 高さ h から自由落下する時間
+      fallDuration: fallFrom ? Math.max(0.3, Math.sqrt((2 * Math.max(0, fallFrom.y - FLOAT_HEIGHT)) / FALL_GRAVITY)) : 0,
     });
   }
 }

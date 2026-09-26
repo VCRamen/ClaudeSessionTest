@@ -1,10 +1,11 @@
 // 敵の定義と AI
 
 import * as THREE from 'three';
-import { MAP_HALF_SIZE, PLAYER_RADIUS } from './Config';
+import { MAP_HALF_SIZE, PLAYER_RADIUS, WAVES_PER_STAGE } from './Config';
 import { Clamp, HasLineOfSight, PushOutCircle } from './Collision';
 import type { Collider } from './Collision';
 import type { NavGrid } from './NavGrid';
+import type { Perch } from './Level';
 import { BuildBatModel, BuildGhostModel, BuildPumpkinKingModel, BuildPumpkinModel } from './EnemyModels';
 import type { EnemyModel } from './EnemyModels';
 
@@ -94,6 +95,8 @@ export interface EnemyContext {
 /** 見失ってから回り込みを始めるまでの待ち時間 */
 const FLANK_DELAY_MIN = 2.0;
 const FLANK_DELAY_MAX = 3.5;
+/** 高所の敵は地上の敵より少しゆっくり撃つ（見つけるまでに時間がかかるため） */
+const PERCH_FIRE_INTERVAL_SCALE = 1.25;
 /** コウモリが噛みついた後に離れている時間 */
 const BAT_RETREAT_TIME_MIN = 2.0;
 const BAT_RETREAT_TIME_MAX = 3.0;
@@ -119,6 +122,8 @@ export class Enemy {
   maxHp: number;
   hp: number;
   isAlive = true;
+  /** ベランダなどの高所に陣取っている場合の立ち位置（動かずに撃ってくる） */
+  readonly perch: Perch | null;
 
   private readonly model: EnemyModel;
   private readonly healthFill: THREE.Mesh;
@@ -137,9 +142,10 @@ export class Enemy {
   private time = Math.random() * 10;
   private hitPulse = 0;
 
-  constructor(kind: EnemyKind, position: THREE.Vector3, wave: number) {
+  constructor(kind: EnemyKind, position: THREE.Vector3, wave: number, perch: Perch | null = null) {
     this.def = ENEMY_DEFS[kind];
-    this.position = position.clone();
+    this.perch = perch;
+    this.position = perch ? perch.position.clone().setY(0) : position.clone();
     const hpScale = 1 + 0.15 * (wave - 1);
     this.damageScale = 1 + 0.05 * (wave - 1);
     this.maxHp = Math.round(this.def.hp * hpScale);
@@ -162,7 +168,7 @@ export class Enemy {
     }
     this.mesh = this.model.group;
     this.mesh.position.copy(this.position);
-    this.mesh.position.y = this.def.flyHeight;
+    this.mesh.position.y = this.GetBaseHeight();
 
     const background = new THREE.Mesh(barBackgroundGeometry, barBackgroundMaterial);
     this.healthFill = new THREE.Mesh(barFillGeometry, barFillMaterial);
@@ -194,6 +200,11 @@ export class Enemy {
     return false;
   }
 
+  /** 足元の高さ（高所の敵はベランダの床、飛ぶ敵は浮いている高さ） */
+  private GetBaseHeight(): number {
+    return (this.perch ? this.perch.position.y : 0) + this.def.flyHeight;
+  }
+
   Update(dt: number, context: EnemyContext): void {
     this.time += dt;
     const def = this.def;
@@ -207,6 +218,11 @@ export class Enemy {
       this.losTimer = 0.2 + Math.random() * 0.1;
       this.GetEyePosition(tmpEye);
       this.hasLineOfSight = HasLineOfSight(tmpEye, context.playerTarget, context.colliders);
+    }
+
+    if (this.perch) {
+      this.UpdatePerched(dt, distance, toPlayerX, toPlayerZ, context);
+      return;
     }
 
     // 移動方向の決定
@@ -256,7 +272,7 @@ export class Enemy {
 
     // 敵同士が重ならないように離す
     for (const other of context.enemies) {
-      if (other === this || !other.isAlive) continue;
+      if (other === this || !other.isAlive || other.perch) continue;
       const dx = this.position.x - other.position.x;
       const dz = this.position.z - other.position.z;
       const minDistance = def.radius + other.def.radius + 0.2;
@@ -284,20 +300,34 @@ export class Enemy {
 
     // 見た目の更新
     const moveAmount = Math.min(1, Math.hypot(this.velocity.x, this.velocity.z) / Math.max(0.1, def.speed));
-    this.mesh.position.set(this.position.x, def.flyHeight, this.position.z);
+    this.mesh.position.set(this.position.x, this.GetBaseHeight(), this.position.z);
     if (def.flyHeight > 0) this.mesh.position.y += Math.sin(this.time * 2.5) * 0.15;
     this.mesh.rotation.y = Math.atan2(toPlayerX, toPlayerZ);
     this.hitPulse = Math.max(0, this.hitPulse - dt * 6);
     this.mesh.scale.setScalar(1 + this.hitPulse * 0.12);
     this.model.Animate(this.time, moveAmount);
 
-    if (this.healthBar.visible) {
-      this.healthBar.position.set(this.mesh.position.x, this.mesh.position.y + this.GetBarHeight(), this.mesh.position.z);
-      this.healthBar.quaternion.copy(context.camera.quaternion);
-      this.healthFill.scale.x = Math.max(0.001, this.hp / this.maxHp);
-    }
+    this.UpdateHealthBar(context);
 
     this.UpdateAttack(dt, distance, context);
+  }
+
+  /** 高所の敵：その場から動かず、プレイヤーの方を向いて撃つ */
+  private UpdatePerched(dt: number, distance: number, toPlayerX: number, toPlayerZ: number, context: EnemyContext): void {
+    this.mesh.position.set(this.position.x, this.GetBaseHeight(), this.position.z);
+    this.mesh.rotation.y = Math.atan2(toPlayerX, toPlayerZ);
+    this.hitPulse = Math.max(0, this.hitPulse - dt * 6);
+    this.mesh.scale.setScalar(1 + this.hitPulse * 0.12);
+    this.model.Animate(this.time, 0);
+    this.UpdateHealthBar(context);
+    this.UpdateAttack(dt, distance, context);
+  }
+
+  private UpdateHealthBar(context: EnemyContext): void {
+    if (!this.healthBar.visible) return;
+    this.healthBar.position.set(this.mesh.position.x, this.mesh.position.y + this.GetBarHeight(), this.mesh.position.z);
+    this.healthBar.quaternion.copy(context.camera.quaternion);
+    this.healthFill.scale.x = Math.max(0.001, this.hp / this.maxHp);
   }
 
   private UpdateAttack(dt: number, distance: number, context: EnemyContext): void {
@@ -329,6 +359,7 @@ export class Enemy {
     this.hasLineOfSight = HasLineOfSight(tmpEye, context.playerTarget, context.colliders);
     if (!this.hasLineOfSight) return;
     this.fireTimer = def.fireIntervalMin + Math.random() * (def.fireIntervalMax - def.fireIntervalMin);
+    if (this.perch) this.fireTimer *= PERCH_FIRE_INTERVAL_SCALE;
 
     // 距離に応じて狙いをばらつかせる（動き回れば避けられる）
     const inaccuracy = 0.4 + distance * 0.05;
@@ -401,8 +432,8 @@ export function BuildWaveComposition(wave: number): EnemyKind[] {
     const j = Math.floor(Math.random() * (i + 1));
     [result[i], result[j]] = [result[j], result[i]];
   }
-  // 5 Wave ごとにボス（中盤に登場）
-  if (wave % 5 === 0) {
+  // ステージの最後の Wave にボス（中盤に登場）
+  if (wave % WAVES_PER_STAGE === 0) {
     result.splice(Math.floor(result.length / 3), 0, 'boss');
   }
   return result;

@@ -33,7 +33,7 @@ export const SHOP_STYLES: ShopStyle[] = [
 
 const materialCache = new Map<string, THREE.Material>();
 
-function GetStandardMaterial(color: number, roughness = 0.85, metalness = 0): THREE.MeshStandardMaterial {
+export function GetStandardMaterial(color: number, roughness = 0.85, metalness = 0): THREE.MeshStandardMaterial {
   const key = `std-${color}-${roughness}-${metalness}`;
   let material = materialCache.get(key) as THREE.MeshStandardMaterial | undefined;
   if (!material) {
@@ -43,7 +43,7 @@ function GetStandardMaterial(color: number, roughness = 0.85, metalness = 0): TH
   return material;
 }
 
-function GetGlowMaterial(color: number): THREE.MeshBasicMaterial {
+export function GetGlowMaterial(color: number): THREE.MeshBasicMaterial {
   const key = `glow-${color}`;
   let material = materialCache.get(key) as THREE.MeshBasicMaterial | undefined;
   if (!material) {
@@ -53,7 +53,7 @@ function GetGlowMaterial(color: number): THREE.MeshBasicMaterial {
   return material;
 }
 
-function GetTextureMaterial(texture: THREE.Texture, isGlowing: boolean): THREE.Material {
+export function GetTextureMaterial(texture: THREE.Texture, isGlowing: boolean): THREE.Material {
   const key = `tex-${texture.uuid}-${isGlowing}`;
   let material = materialCache.get(key);
   if (!material) {
@@ -65,7 +65,7 @@ function GetTextureMaterial(texture: THREE.Texture, isGlowing: boolean): THREE.M
   return material;
 }
 
-function AddBox(
+export function AddBox(
   parent: THREE.Object3D,
   material: THREE.Material,
   width: number,
@@ -84,7 +84,7 @@ function AddBox(
   return mesh;
 }
 
-function AddPlane(parent: THREE.Object3D, material: THREE.Material, width: number, height: number, x: number, y: number, z: number): THREE.Mesh {
+export function AddPlane(parent: THREE.Object3D, material: THREE.Material, width: number, height: number, x: number, y: number, z: number): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
   mesh.position.set(x, y, z);
   parent.add(mesh);

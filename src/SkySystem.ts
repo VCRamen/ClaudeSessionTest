@@ -44,6 +44,38 @@ const KEYFRAMES: TimeKeyframe[] = [
   },
 ];
 
+/** ビル街：夕方の「ブルーアワー」から夜へ。遠くのビル群が見えるよう霧は薄め */
+const BLUE_HOUR_KEYFRAMES: TimeKeyframe[] = [
+  {
+    time: 0,
+    skyStops: [[0, '#101a4a'], [0.22, '#22347a'], [0.36, '#3d4f9a'], [0.45, '#8a7aa8'], [0.5, '#e8a070'], [1, '#e8a070']],
+    sunColor: 0xffb070, sunIntensity: 2.0, sunPosition: new THREE.Vector3(-30, 20, 22),
+    hemisphereSky: 0x9aa8ff, hemisphereGround: 0x5a4a48, hemisphereIntensity: 1.5,
+    fogColor: 0x4a5488, fogDensity: 0.007, starOpacity: 0, moonOpacity: 0,
+  },
+  {
+    time: 0.5,
+    skyStops: [[0, '#0a1036'], [0.22, '#18245e'], [0.36, '#2a3a7e'], [0.45, '#5a5a8e'], [0.5, '#b07868'], [1, '#b07868']],
+    sunColor: 0xff8a60, sunIntensity: 1.2, sunPosition: new THREE.Vector3(-40, 12, 22),
+    hemisphereSky: 0x8090e0, hemisphereGround: 0x40384a, hemisphereIntensity: 1.1,
+    fogColor: 0x343c6a, fogDensity: 0.008, starOpacity: 0.3, moonOpacity: 0.5,
+  },
+  {
+    time: 1,
+    skyStops: [[0, '#03050f'], [0.22, '#0a1234'], [0.36, '#121e4a'], [0.45, '#243060'], [0.5, '#343c68'], [1, '#343c68']],
+    sunColor: 0x9ab0ff, sunIntensity: 0.9, sunPosition: new THREE.Vector3(20, 40, -15),
+    hemisphereSky: 0x6070c0, hemisphereGround: 0x2a2030, hemisphereIntensity: 0.8,
+    fogColor: 0x1a1e38, fogDensity: 0.009, starOpacity: 0.8, moonOpacity: 1,
+  },
+];
+
+export type SkyPalette = 'dusk' | 'blueHour';
+
+const PALETTES: Record<SkyPalette, TimeKeyframe[]> = {
+  dusk: KEYFRAMES,
+  blueHour: BLUE_HOUR_KEYFRAMES,
+};
+
 /** 空の時間帯が移り変わるのにかける時間（秒） */
 const TRANSITION_TIME = 6;
 const SKY_RADIUS = 220;
@@ -66,13 +98,16 @@ export class SkySystem {
   private readonly skyTexture: THREE.CanvasTexture;
   private readonly stars: THREE.Points;
   private readonly moon: THREE.Mesh;
+  private readonly sky: THREE.Mesh;
+  private readonly keyframes: TimeKeyframe[];
   private currentTime = 0;
   private targetTime = 0;
   private startTime = 0;
   private transitionElapsed = TRANSITION_TIME;
 
-  constructor(scene: THREE.Scene, shadowRange: number) {
+  constructor(scene: THREE.Scene, shadowRange: number, palette: SkyPalette = 'dusk') {
     this.scene = scene;
+    this.keyframes = PALETTES[palette];
     this.fog = new THREE.FogExp2(0x8a5a78, 0.013);
     scene.fog = this.fog;
     scene.background = new THREE.Color(0x3a2a5e);
@@ -81,11 +116,11 @@ export class SkySystem {
     this.skyCanvas.height = 512;
     this.skyTexture = new THREE.CanvasTexture(this.skyCanvas);
     this.skyTexture.colorSpace = THREE.SRGBColorSpace;
-    const sky = new THREE.Mesh(
+    this.sky = new THREE.Mesh(
       new THREE.SphereGeometry(SKY_RADIUS, 24, 16),
       new THREE.MeshBasicMaterial({ map: this.skyTexture, side: THREE.BackSide, fog: false }),
     );
-    scene.add(sky);
+    scene.add(this.sky);
 
     // 星（空の上半分にばらまく）
     const starPositions: number[] = [];
@@ -154,11 +189,24 @@ export class SkySystem {
     this.Apply(this.currentTime);
   }
 
+  /** シーンから取り除き、GPU のリソースを解放する（ステージの切り替え時） */
+  Dispose(): void {
+    this.scene.remove(this.sky, this.stars, this.moon, this.hemisphere, this.sun);
+    for (const object of [this.sky, this.stars, this.moon]) {
+      object.geometry.dispose();
+      (object.material as THREE.Material).dispose();
+    }
+    this.skyTexture.dispose();
+    this.sun.shadow.map?.dispose();
+    if (this.scene.fog === this.fog) this.scene.fog = null;
+  }
+
   private Apply(time: number): void {
+    const keyframes = this.keyframes;
     let index = 0;
-    while (index < KEYFRAMES.length - 2 && time > KEYFRAMES[index + 1].time) index++;
-    const from = KEYFRAMES[index];
-    const to = KEYFRAMES[index + 1];
+    while (index < keyframes.length - 2 && time > keyframes[index + 1].time) index++;
+    const from = keyframes[index];
+    const to = keyframes[index + 1];
     const t = Math.min(1, Math.max(0, (time - from.time) / (to.time - from.time)));
 
     // 空のグラデーション

@@ -261,3 +261,151 @@ export function CreateBarricadeTexture(): THREE.CanvasTexture {
   texture.wrapS = THREE.RepeatWrapping;
   return texture;
 }
+
+// ------------------------------------------------------------
+// ビル街
+// ------------------------------------------------------------
+
+/**
+ * 高層ビルのガラス窓（4 列 × 4 階分を 1 枚にして、繰り返して貼る）。
+ * variant 0 = 青いガラスのオフィス、1 = 暖色の明かりのオフィス
+ */
+export function CreateOfficeWindowTexture(variant: number): THREE.CanvasTexture {
+  const texture = CreateCanvasTexture(`office-window-${variant}`, 256, 256, (context) => {
+    context.fillStyle = variant === 0 ? '#1a2438' : '#231e2a';
+    context.fillRect(0, 0, 256, 256);
+    for (let row = 0; row < 4; row++) {
+      for (let column = 0; column < 4; column++) {
+        const x = column * 64 + 4;
+        const y = row * 64 + 8;
+        const isLit = Math.random() < (variant === 0 ? 0.55 : 0.45);
+        if (isLit) {
+          const warm = variant === 1 || Math.random() < 0.4;
+          context.fillStyle = warm ? '#ffd28a' : '#cfe6ff';
+        } else {
+          context.fillStyle = variant === 0 ? '#2c3f5e' : '#35303e';
+        }
+        context.fillRect(x, y, 56, 46);
+        if (isLit) {
+          // ブラインドの影
+          context.fillStyle = 'rgba(0, 0, 0, 0.18)';
+          for (let line = y + 4; line < y + 22; line += 5) context.fillRect(x, line, 56, 2);
+        }
+      }
+    }
+  });
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  return texture;
+}
+
+/** マンションの窓（2 部屋分を 1 枚にして、横に繰り返して貼る） */
+export function CreateApartmentWindowTexture(): THREE.CanvasTexture {
+  const texture = CreateCanvasTexture('apartment-window', 256, 128, (context) => {
+    context.fillStyle = '#6f6a64';
+    context.fillRect(0, 0, 256, 128);
+    for (let room = 0; room < 2; room++) {
+      const x = room * 128 + 10;
+      const isLit = Math.random() < 0.7;
+      const gradient = context.createLinearGradient(0, 8, 0, 120);
+      gradient.addColorStop(0, isLit ? '#ffe2a8' : '#2e2c3a');
+      gradient.addColorStop(1, isLit ? '#e89a4c' : '#1c1a26');
+      context.fillStyle = gradient;
+      context.fillRect(x, 8, 108, 112);
+      // カーテンと窓枠
+      if (isLit) {
+        context.fillStyle = 'rgba(120, 70, 40, 0.35)';
+        context.fillRect(x, 8, 18, 112);
+        context.fillRect(x + 90, 8, 18, 112);
+      }
+      context.strokeStyle = '#3a3634';
+      context.lineWidth = 4;
+      context.strokeRect(x, 8, 108, 112);
+      context.beginPath();
+      context.moveTo(x + 54, 8);
+      context.lineTo(x + 54, 120);
+      context.stroke();
+    }
+  });
+  texture.wrapS = THREE.RepeatWrapping;
+  return texture;
+}
+
+/** 1 階のガラス張りの店（明るい店内） */
+export function CreateStorefrontTexture(variant: number): THREE.CanvasTexture {
+  return CreateCanvasTexture(`storefront-${variant}`, 512, 192, (context) => {
+    const colors = [['#fff0d0', '#e8a060'], ['#ffe8f0', '#c87aa0'], ['#f0f6ff', '#8aa8d0']][variant % 3];
+    const gradient = context.createLinearGradient(0, 0, 0, 192);
+    gradient.addColorStop(0, colors[0]);
+    gradient.addColorStop(1, colors[1]);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 512, 192);
+    // 天井の照明
+    context.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    for (let x = 30; x < 512; x += 80) context.fillRect(x, 10, 40, 5);
+    // 棚・商品・かぼちゃの飾り
+    for (let x = 20; x < 500; x += 90 + Math.random() * 40) {
+      context.fillStyle = 'rgba(80, 50, 40, 0.55)';
+      context.fillRect(x, 80, 50, 90);
+      for (let shelf = 0; shelf < 3; shelf++) {
+        context.fillStyle = `hsla(${Math.floor(Math.random() * 360)}, 55%, 55%, 0.9)`;
+        context.fillRect(x + 4, 86 + shelf * 28, 42, 14);
+      }
+    }
+    context.fillStyle = '#ff8a1f';
+    for (const x of [60, 300, 440]) {
+      context.beginPath();
+      context.ellipse(x, 172, 16, 12, 0, 0, Math.PI * 2);
+      context.fill();
+    }
+    // 窓枠
+    context.strokeStyle = '#2a2a30';
+    context.lineWidth = 8;
+    context.strokeRect(4, 4, 504, 184);
+    for (let x = 128; x < 512; x += 128) {
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, 192);
+      context.stroke();
+    }
+  });
+}
+
+/** 街灯に吊るすハロウィンのバナー（紫地にジャック・オー・ランタン） */
+export function CreateHalloweenBannerTexture(): THREE.CanvasTexture {
+  return CreateCanvasTexture('halloween-banner', 128, 256, (context) => {
+    context.fillStyle = '#4a2170';
+    context.fillRect(0, 0, 128, 256);
+    context.strokeStyle = '#e8a030';
+    context.lineWidth = 5;
+    context.strokeRect(6, 6, 116, 244);
+    // かぼちゃ
+    context.fillStyle = '#ff8a1f';
+    context.beginPath();
+    context.ellipse(64, 120, 42, 34, 0, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = '#3d6b21';
+    context.fillRect(60, 78, 8, 12);
+    context.fillStyle = '#2a1000';
+    context.beginPath();
+    context.moveTo(40, 112);
+    context.lineTo(50, 96);
+    context.lineTo(60, 112);
+    context.moveTo(68, 112);
+    context.lineTo(78, 96);
+    context.lineTo(88, 112);
+    context.fill();
+    context.beginPath();
+    context.moveTo(38, 128);
+    context.lineTo(90, 128);
+    context.lineTo(80, 142);
+    context.lineTo(48, 142);
+    context.closePath();
+    context.fill();
+    context.fillStyle = '#f2d27a';
+    context.font = `bold 26px ${GOTHIC_FONT}`;
+    context.textAlign = 'center';
+    context.fillText('HALLO', 64, 200);
+    context.fillText('WEEN', 64, 228);
+  });
+}

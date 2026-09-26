@@ -1,4 +1,6 @@
-// マップ：ハロウィン飾りの商店街。十字の大通りと、4 つの区画（路地・神社のある公園・駐車場）からなる
+// マップ：十字の大通りと 4 つの区画からなる。ステージごとに建物・小物・区画の種類が変わる
+//   商店街：ハロウィン飾りの商店街（路地・神社のある公園・駐車場）
+//   ビル街：マンションと高層ビルの大通り（オフィスの裏通り・噴水のある広場・駐車場）。ベランダに敵が陣取る
 //
 // 各区画は「区画ローカル座標」(a, b) で定義する。a は大通りの中心線からの x 方向の距離、
 // b は z 方向の距離で、区画ごとに符号（sx, sz）を掛けてワールド座標にする。
@@ -14,7 +16,12 @@ import {
   BuildTorii, BuildUtilityPole, BuildVendingMachine, SHOP_STYLES,
 } from './CityProps';
 import { CreateBuntingTexture, CreatePavingTexture, CreateSidewalkTexture } from './CityTextures';
+import {
+  APARTMENT_FLOOR_HEIGHT, APARTMENT_GROUND_FLOOR_HEIGHT, BALCONY_DEPTH, BALCONY_SLAB_THICKNESS, BuildApartment, BuildBalcony,
+  BuildFountain, BuildHalloweenBanner, BuildOfficeTower, BuildSkyline, BuildTrafficCone, BuildTrafficLight,
+} from './DowntownProps';
 import { SkySystem } from './SkySystem';
+import type { StageId } from './Stages';
 import { BatchStaticMeshes, MarkDynamic, WireBatch } from './StaticBatcher';
 
 /** 大通りの半幅（歩道を含む） */
@@ -27,6 +34,19 @@ const VISUAL_STREET_LENGTH = 62;
 const BLOCK_OUTER = 36;
 const BUILDING_DEPTH = 6;
 const WALL_COLORS = [0x8a6a52, 0x6f7a6a, 0x9a7b5c, 0x7d5d4a, 0x6a6070, 0x8c8278, 0x5f6a78];
+const CONCRETE_COLORS = [0x8a8680, 0x7a7872, 0x96908a, 0x6e6c70];
+/** 商店街の 2 階ベランダ（物干し）の床の高さと幅 */
+const SHOP_BALCONY_HEIGHT = 3.9;
+const SHOP_BALCONY_WIDTH = 2.6;
+/** ベランダの敵が立つ位置（壁からの距離）と、倒したときにアイテムが落ちる位置（壁からの距離） */
+const PERCH_WALL_OFFSET = 0.75;
+const PERCH_DROP_OFFSET = 2.3;
+/** 敵が陣取るベランダの高さの上限（これより上の階は見上げても狙いにくいので使わない） */
+const PERCH_MAX_HEIGHT = 8;
+/** 大通りの街灯の位置 (u, v) と電柱の v（商店街のみ）。ベランダがぶつからないように先に決めておく */
+const LAMP_SPOTS: [number, number][] = [[-4.6, 6.5], [4.6, 22.8], [-4.6, 36], [4.6, 48]];
+const POLE_DISTANCES = [18.5, 28.5, 41, 54];
+const POLE_OFFSET = 4.75;
 
 /** 4 本の大通り（北・南・西・東）。along は中心から外へ向かう方向 */
 const ARMS = [
@@ -36,7 +56,7 @@ const ARMS = [
   new THREE.Vector3(1, 0, 0),
 ];
 
-type QuadrantKind = 'alleys' | 'park' | 'parking';
+type QuadrantKind = 'alleys' | 'park' | 'parking' | 'offices' | 'plaza';
 
 interface Quadrant {
   sx: number;
@@ -44,13 +64,21 @@ interface Quadrant {
   kind: QuadrantKind;
 }
 
-/** 区画の配置（北西・北東・南東・南西）。北は -z */
-const QUADRANTS: Quadrant[] = [
-  { sx: -1, sz: -1, kind: 'alleys' },
-  { sx: 1, sz: -1, kind: 'park' },
-  { sx: 1, sz: 1, kind: 'alleys' },
-  { sx: -1, sz: 1, kind: 'parking' },
-];
+/** ステージごとの区画の配置（北西・北東・南東・南西）。北は -z */
+const STAGE_QUADRANTS: Record<StageId, Quadrant[]> = {
+  shoppingStreet: [
+    { sx: -1, sz: -1, kind: 'alleys' },
+    { sx: 1, sz: -1, kind: 'park' },
+    { sx: 1, sz: 1, kind: 'alleys' },
+    { sx: -1, sz: 1, kind: 'parking' },
+  ],
+  downtown: [
+    { sx: -1, sz: -1, kind: 'offices' },
+    { sx: 1, sz: -1, kind: 'plaza' },
+    { sx: 1, sz: 1, kind: 'offices' },
+    { sx: -1, sz: 1, kind: 'parking' },
+  ],
+};
 
 /** 区画ローカル座標の長方形 [aMin, aMax, bMin, bMax] */
 type LocalRect = [number, number, number, number];
@@ -61,11 +89,15 @@ const QUADRANT_BLOCKS: Record<QuadrantKind, LocalRect[]> = {
   alleys: [[5, 13.5, 5, 13.5], [17.5, BLOCK_OUTER, 5, 12.5], [5, 12.5, 17.5, BLOCK_OUTER], [16.5, BLOCK_OUTER, 16.5, BLOCK_OUTER]],
   park: [[5, 13.5, 5, 13.5], [17.5, BLOCK_OUTER, 5, 11.5], [5, 11.5, 17.5, BLOCK_OUTER]],
   parking: [[5, 13.5, 5, 13.5], [5, 12.5, 17.5, BLOCK_OUTER], [24, BLOCK_OUTER, 5, 10]],
+  // オフィス街の裏通り（路地と同じ形）
+  offices: [[5, 13.5, 5, 13.5], [17.5, BLOCK_OUTER, 5, 12.5], [5, 12.5, 17.5, BLOCK_OUTER], [16.5, BLOCK_OUTER, 16.5, BLOCK_OUTER]],
+  // 大通りに大きく開いた広場。周りのマンションのベランダから見下ろされる
+  plaza: [[5, 12, 5, 12], [22, BLOCK_OUTER, 5, 11], [5, 11, 22, BLOCK_OUTER]],
 };
 
 type PropKind =
   | 'planter' | 'crates' | 'vending' | 'bench' | 'bicycle' | 'chalkboard' | 'manhole' | 'barrel' | 'propane'
-  | 'garbage' | 'car' | 'hedge' | 'tree' | 'stoneLantern' | 'parkingMeter' | 'pumpkin';
+  | 'garbage' | 'car' | 'hedge' | 'tree' | 'stoneLantern' | 'parkingMeter' | 'pumpkin' | 'cone' | 'fountain';
 
 /** 小物の配置。大通りでは (u, v) = (通りを横切る方向, 中心からの距離)、区画では (a, b) */
 interface PropPlacement {
@@ -81,7 +113,7 @@ interface PropPlacement {
 }
 
 /** 大通りの小物（2 パターンを交互に使う）。路地の入口（v = 13〜18）の歩道はあけておく */
-const ARM_LAYOUTS: PropPlacement[][] = [
+const SHOPPING_ARM_LAYOUTS: PropPlacement[][] = [
   [
     { kind: 'planter', x: -2.6, y: 8, size: 2.2, isRotated: true },
     { kind: 'crates', x: 2.3, y: 10.5, size: 3 },
@@ -114,6 +146,33 @@ const ARM_LAYOUTS: PropPlacement[][] = [
     { kind: 'propane', x: 4.2, y: 11.5 },
   ],
 ];
+
+/** ビル街の大通りの小物。路肩に車が停まり、工事中のコーンが置かれている */
+const DOWNTOWN_ARM_LAYOUT: PropPlacement[] = [
+  { kind: 'planter', x: -2.6, y: 8, size: 2.2, isRotated: true },
+  { kind: 'car', x: 2.6, y: 12.5, isRotated: true },
+  { kind: 'vending', x: 4.45, y: 8.3 },
+  { kind: 'crates', x: -0.6, y: 15.5, size: 2 },
+  { kind: 'planter', x: 2.6, y: 20.5, size: 2.2, isRotated: true },
+  { kind: 'car', x: -2.6, y: 19.5, isRotated: true },
+  { kind: 'crates', x: -2.2, y: 24.8, size: 3 },
+  { kind: 'bench', x: 4.6, y: 25.5 },
+  { kind: 'chalkboard', x: -4.2, y: 10.5 },
+  { kind: 'manhole', x: 1.2, y: 17.2 },
+  { kind: 'cone', x: 0.5, y: 16.6 },
+  { kind: 'cone', x: 1.9, y: 16.7 },
+  { kind: 'cone', x: 1.2, y: 18.1 },
+  { kind: 'barrel', x: 4.3, y: 21.8 },
+  { kind: 'barrel', x: -4.3, y: 27.5 },
+  { kind: 'propane', x: -4.2, y: 12 },
+];
+
+/** ステージごとの大通りの小物（腕ごとに順番に使う） */
+const STAGE_ARM_LAYOUTS: Record<StageId, PropPlacement[][]> = {
+  shoppingStreet: SHOPPING_ARM_LAYOUTS,
+  // 2 パターン目は左右を入れ替えたもの
+  downtown: [DOWNTOWN_ARM_LAYOUT, DOWNTOWN_ARM_LAYOUT.map((placement) => ({ ...placement, x: -placement.x }))],
+};
 
 /** 区画ごとの小物（区画ローカル座標） */
 const QUADRANT_PROPS: Record<QuadrantKind, PropPlacement[]> = {
@@ -161,6 +220,43 @@ const QUADRANT_PROPS: Record<QuadrantKind, PropPlacement[]> = {
     { kind: 'propane', x: 22, y: 27.5 },
     { kind: 'garbage', x: 25, y: 11 },
   ],
+  offices: [
+    { kind: 'crates', x: 15.5, y: 8.5, size: 3 },
+    { kind: 'propane', x: 14.1, y: 11 },
+    { kind: 'barrel', x: 16.9, y: 6.8 },
+    { kind: 'garbage', x: 16.8, y: 12.2 },
+    { kind: 'crates', x: 9, y: 15.5, size: 3, isRotated: true },
+    { kind: 'barrel', x: 6.6, y: 16.9 },
+    { kind: 'cone', x: 11.4, y: 14.1 },
+    { kind: 'cone', x: 11.6, y: 16.4 },
+    { kind: 'crates', x: 23, y: 14.5, size: 3, isRotated: true },
+    { kind: 'propane', x: 27, y: 13.1 },
+    { kind: 'garbage', x: 20, y: 15.9 },
+    { kind: 'crates', x: 14.5, y: 23, size: 3 },
+    { kind: 'barrel', x: 13.1, y: 26 },
+    { kind: 'vending', x: 16.05, y: 19.5, facing: [-1, 0] },
+  ],
+  plaza: [
+    { kind: 'fountain', x: 20, y: 20, size: 3.4 },
+    { kind: 'planter', x: 16.5, y: 8.5, size: 2.4 },
+    { kind: 'planter', x: 8.5, y: 16.5, size: 2.4, isRotated: true },
+    { kind: 'planter', x: 26.5, y: 16, size: 2.4 },
+    { kind: 'planter', x: 16, y: 26.5, size: 2.4, isRotated: true },
+    { kind: 'tree', x: 14, y: 14 },
+    { kind: 'tree', x: 25.5, y: 25.5 },
+    { kind: 'tree', x: 13.5, y: 23.5 },
+    { kind: 'tree', x: 23.5, y: 13.5 },
+    { kind: 'bench', x: 20, y: 15.6 },
+    { kind: 'bench', x: 20, y: 24.4 },
+    { kind: 'crates', x: 27.5, y: 21.5, size: 3 },
+    { kind: 'crates', x: 21.5, y: 27.5, size: 3, isRotated: true },
+    { kind: 'barrel', x: 12.8, y: 18 },
+    { kind: 'propane', x: 28, y: 28 },
+    { kind: 'barrel', x: 18, y: 12.8 },
+    { kind: 'pumpkin', x: 17.6, y: 22.3 },
+    { kind: 'pumpkin', x: 22.4, y: 17.7 },
+    { kind: 'vending', x: 25, y: 11.55, facing: [0, 1] },
+  ],
 };
 
 /** 区画ごとの敵の出現口（区画ローカル座標）と、どの辺に属するか */
@@ -168,11 +264,21 @@ const QUADRANT_SPAWNS: Record<QuadrantKind, { a: number; b: number; edge: 'x' | 
   alleys: [{ a: 14.5, b: 28, edge: 'z' }, { a: 28, b: 14.5, edge: 'x' }],
   park: [{ a: 18, b: 28, edge: 'z' }, { a: 28, b: 18, edge: 'x' }],
   parking: [{ a: 20, b: 28, edge: 'z' }, { a: 28, b: 20, edge: 'x' }],
+  offices: [{ a: 14.5, b: 28, edge: 'z' }, { a: 28, b: 14.5, edge: 'x' }],
+  plaza: [{ a: 17, b: 28, edge: 'z' }, { a: 28, b: 17, edge: 'x' }],
 };
 
 interface SpawnPoint {
   position: THREE.Vector3;
   side: THREE.Vector3;
+}
+
+/** 高所（ベランダ）の敵が立つ場所 */
+export interface Perch {
+  /** 足元の位置（ワールド座標。y がベランダの床の高さ） */
+  position: THREE.Vector3;
+  /** 倒したときにアイテムが落ちる地面の位置 */
+  dropPosition: THREE.Vector3;
 }
 
 /** ワールド座標の長方形 */
@@ -184,12 +290,15 @@ export interface Rect {
 }
 
 export class Level {
+  readonly stageId: StageId;
   readonly group = new THREE.Group();
   /** 静的な障害物 + 生存中の樽 */
   readonly colliders: Collider[] = [];
   readonly barrels: Barrel[] = [];
   readonly spawnPoints: THREE.Vector3[] = [];
   readonly playerStart = new THREE.Vector3(0, 0, 3);
+  /** ベランダなど、高所の敵が立てる場所 */
+  readonly perches: Perch[] = [];
 
   private readonly staticColliders: Collider[] = [];
   private readonly spawns: SpawnPoint[] = [];
@@ -200,13 +309,23 @@ export class Level {
   private readonly wires = new WireBatch();
   private readonly buntingMatrices: THREE.Matrix4[][] = [[], []];
   private readonly sky: SkySystem;
+  private readonly scene: THREE.Scene;
+  private readonly quadrants: Quadrant[];
+  private readonly isDowntown: boolean;
+  /** 大通りに立つ柱（街灯・電柱）の位置。ベランダを付けない場所の判定に使う */
+  private readonly streetPoles: THREE.Vector3[] = [];
   private styleIndex = 0;
   private time = 0;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, stageId: StageId = 'shoppingStreet') {
+    this.scene = scene;
+    this.stageId = stageId;
+    this.quadrants = STAGE_QUADRANTS[stageId];
+    this.isDowntown = stageId === 'downtown';
     scene.add(this.group);
-    this.sky = new SkySystem(scene, MAP_HALF_SIZE + 6);
+    this.sky = new SkySystem(scene, MAP_HALF_SIZE + 6, this.isDowntown ? 'blueHour' : 'dusk');
     this.CollectBlocks();
+    this.CollectStreetPoles();
     this.BuildGround();
     this.BuildBlockBuildings();
     this.BuildMainStreets();
@@ -215,7 +334,9 @@ export class Level {
     this.BuildMapEdges();
     this.BuildBunting();
     this.BuildSpawnGates();
+    if (this.isDowntown) this.group.add(BuildSkyline(80, 130, 34));
     this.group.add(this.wires.Build(0x1a1418));
+    this.ValidatePerches();
 
     // 動くもの以外をまとめて描画負荷を下げる
     for (const object of [...this.lanterns, ...this.portalMeshes, ...this.barrels.map((barrel) => barrel.mesh)]) {
@@ -223,6 +344,16 @@ export class Level {
     }
     BatchStaticMeshes(this.group);
     this.RefreshColliders();
+  }
+
+  /** シーンから取り除き、GPU のリソースを解放する（ステージの切り替え時） */
+  Dispose(): void {
+    this.scene.remove(this.group);
+    this.sky.Dispose();
+    this.group.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+    });
   }
 
   Update(dt: number): void {
@@ -316,7 +447,7 @@ export class Level {
 
   /** 建物ブロック（区画のブロック・外周・大通りの延長部分）を集めて当たり判定を作る */
   private CollectBlocks(): void {
-    for (const quadrant of QUADRANTS) {
+    for (const quadrant of this.quadrants) {
       for (const localRect of QUADRANT_BLOCKS[quadrant.kind]) {
         this.blocks.push(Level.QuadrantRect(quadrant, localRect));
       }
@@ -350,9 +481,21 @@ export class Level {
     }
   }
 
+  /** 大通りの街灯・電柱の位置を集める */
+  private CollectStreetPoles(): void {
+    ARMS.forEach((along, armIndex) => {
+      for (const [u, v] of LAMP_SPOTS) this.streetPoles.push(Level.ArmToWorld(along, u, v));
+      if (this.isDowntown) return;
+      const poleSide = armIndex % 2 === 0 ? 1 : -1;
+      for (const v of POLE_DISTANCES) this.streetPoles.push(Level.ArmToWorld(along, poleSide * POLE_OFFSET, v));
+    });
+  }
+
   private BuildGround(): void {
     const size = VISUAL_STREET_LENGTH * 2 + 10;
-    this.group.add(this.CreateGroundPlane(CreatePavingTexture(), size, size, 0, 0, 0));
+    // ビル街の車道はアスファルト（石畳を暗くしたもの）
+    this.group.add(this.CreateGroundPlane(CreatePavingTexture(), size, size, 0, 0, 0, this.isDowntown ? 0x6a6872 : 0xffffff));
+    if (this.isDowntown) this.BuildRoadMarkings();
 
     // 大通りの歩道と縁石
     const sidewalkTexture = CreateSidewalkTexture();
@@ -429,19 +572,15 @@ export class Level {
     let t = from;
     while (to - t >= 2) {
       const remaining = to - t;
-      let width = 4.5 + Math.random() * 2.5;
+      let width = this.isDowntown ? 7 + Math.random() * 3 : 4.5 + Math.random() * 2.5;
       if (remaining - width < 2) width = remaining;
       const center = start.clone().addScaledVector(direction, t + width / 2);
       const facesMainStreet = Math.abs(center.x + normal.x * 2) < MAIN_HALF_WIDTH || Math.abs(center.z + normal.z * 2) < MAIN_HALF_WIDTH;
       const isOuterRing = Math.max(Math.abs(center.x), Math.abs(center.z)) > MAP_HALF_SIZE + 2 && !facesMainStreet;
-      const height = isOuterRing ? 9 + Math.random() * 5 : 6.5 + Math.random() * 3.5;
-      // 大通りと広場に面した側は店、狭い路地や外周は建物の裏側
-      const isShop = facesMainStreet || (!isOuterRing && this.styleIndex % 3 !== 0);
-      const building = isShop
-        ? BuildShop(width, height, BUILDING_DEPTH, SHOP_STYLES[this.styleIndex % SHOP_STYLES.length])
-        : BuildBackAlleyFacade(width, height, BUILDING_DEPTH, WALL_COLORS[this.styleIndex % WALL_COLORS.length], this.styleIndex);
+      const building = this.isDowntown
+        ? this.BuildDowntownFacade(center, normal, direction, width, facesMainStreet, isOuterRing)
+        : this.BuildShoppingFacade(center, normal, direction, width, facesMainStreet, isOuterRing);
       this.styleIndex += 3;
-      if (isShop) this.lanterns.push(...((building.userData.swingingObjects as THREE.Object3D[] | undefined) ?? []));
       building.position.copy(center);
       building.rotation.y = Level.FacingRotation(normal);
       this.group.add(building);
@@ -449,22 +588,144 @@ export class Level {
     }
   }
 
+  /** 商店街の建物。大通りと広場に面した側は店、狭い路地や外周は建物の裏側 */
+  private BuildShoppingFacade(
+    center: THREE.Vector3, normal: THREE.Vector3, direction: THREE.Vector3, width: number, facesMainStreet: boolean, isOuterRing: boolean,
+  ): THREE.Group {
+    const height = isOuterRing ? 9 + Math.random() * 5 : 6.5 + Math.random() * 3.5;
+    const isShop = facesMainStreet || (!isOuterRing && this.styleIndex % 3 !== 0);
+    if (!isShop) {
+      return BuildBackAlleyFacade(width, height, BUILDING_DEPTH, WALL_COLORS[this.styleIndex % WALL_COLORS.length], this.styleIndex);
+    }
+    const building = BuildShop(width, height, BUILDING_DEPTH, SHOP_STYLES[this.styleIndex % SHOP_STYLES.length]);
+    this.lanterns.push(...((building.userData.swingingObjects as THREE.Object3D[] | undefined) ?? []));
+    // 大通りに面した 2 階建て以上の店の一部には、物干しのベランダがある（高所の敵が立つ）
+    const offset = -width / 4;
+    if (facesMainStreet && this.styleIndex % 2 === 0
+      && this.CanAttachBalcony(center, normal, direction, offset, SHOP_BALCONY_WIDTH)) {
+      const balcony = BuildBalcony(SHOP_BALCONY_WIDTH, BALCONY_DEPTH - 0.2, false);
+      balcony.position.set(offset, SHOP_BALCONY_HEIGHT, 0);
+      building.add(balcony);
+      this.AddBalcony(center, normal, direction, offset, SHOP_BALCONY_WIDTH, BALCONY_DEPTH - 0.2, SHOP_BALCONY_HEIGHT);
+    }
+    return building;
+  }
+
+  /** ビル街の建物。外周は高層ビル、開けた場所に面した側はベランダ付きのマンション、狭い裏通りはビルの裏側 */
+  private BuildDowntownFacade(
+    center: THREE.Vector3, normal: THREE.Vector3, direction: THREE.Vector3, width: number, facesMainStreet: boolean, isOuterRing: boolean,
+  ): THREE.Group {
+    if (isOuterRing) return BuildOfficeTower(width, 22 + Math.random() * 30, BUILDING_DEPTH, this.styleIndex);
+    // 正面の 7m 先まで歩ける＝大通りや広場に面している
+    const front = center.clone().addScaledVector(normal, 7);
+    const facesOpenArea = facesMainStreet || this.IsWalkable(front.x, front.z);
+    if (!facesOpenArea) {
+      return BuildBackAlleyFacade(width, 10 + Math.random() * 4, BUILDING_DEPTH, CONCRETE_COLORS[this.styleIndex % CONCRETE_COLORS.length], this.styleIndex);
+    }
+    const height = 12 + Math.random() * 6;
+    const balconyHeights: number[] = [];
+    for (let y = APARTMENT_GROUND_FLOOR_HEIGHT; y + APARTMENT_FLOOR_HEIGHT < height; y += APARTMENT_FLOOR_HEIGHT) balconyHeights.push(y);
+    // ベランダは街灯より高い位置にだけ付くので、柱とぶつかる心配はない
+    for (const y of balconyHeights) this.AddBalcony(center, normal, direction, 0, width - 0.3, BALCONY_DEPTH, y);
+    return BuildApartment(width, height, BUILDING_DEPTH, this.styleIndex, balconyHeights);
+  }
+
+  /** ベランダを付けても大通りの柱（街灯・電柱）とぶつからないか */
+  private CanAttachBalcony(center: THREE.Vector3, normal: THREE.Vector3, direction: THREE.Vector3, offset: number, width: number): boolean {
+    const middle = center.clone().addScaledVector(direction, offset).addScaledVector(normal, BALCONY_DEPTH / 2);
+    return this.streetPoles.every((pole) => {
+      const dx = pole.x - middle.x;
+      const dz = pole.z - middle.z;
+      const alongDistance = Math.abs(dx * direction.x + dz * direction.z);
+      const outDistance = Math.abs(dx * normal.x + dz * normal.z);
+      return alongDistance > width / 2 + 0.6 || outDistance > BALCONY_DEPTH / 2 + 0.6;
+    });
+  }
+
+  /**
+   * ベランダの当たり判定（床）と、敵が立つ場所を登録する。
+   * offset は建物の中心からの壁沿いのずれ、floorHeight は床の上面の高さ
+   */
+  private AddBalcony(
+    center: THREE.Vector3, normal: THREE.Vector3, direction: THREE.Vector3, offset: number, width: number, depth: number, floorHeight: number,
+  ): void {
+    const middle = center.clone().addScaledVector(direction, offset);
+    const slabCenter = middle.clone().addScaledVector(normal, depth / 2);
+    const halfX = Math.abs(direction.x) * (width / 2) + Math.abs(normal.x) * (depth / 2);
+    const halfZ = Math.abs(direction.z) * (width / 2) + Math.abs(normal.z) * (depth / 2);
+    this.staticColliders.push({
+      box: new THREE.Box3(
+        new THREE.Vector3(slabCenter.x - halfX, floorHeight - BALCONY_SLAB_THICKNESS, slabCenter.z - halfZ),
+        new THREE.Vector3(slabCenter.x + halfX, floorHeight, slabCenter.z + halfZ),
+      ),
+      barrel: null,
+    });
+    if (floorHeight > PERCH_MAX_HEIGHT) return;
+    // 敵の立ち位置は 2.2m 間隔（幅の狭いベランダは真ん中だけ）
+    const count = Math.max(1, Math.floor((width - 0.6) / 2.2));
+    for (let i = 0; i < count; i++) {
+      const along = (i - (count - 1) / 2) * 2.2;
+      const base = middle.clone().addScaledVector(direction, along);
+      this.perches.push({
+        position: base.clone().addScaledVector(normal, Math.min(PERCH_WALL_OFFSET, depth - 0.45)).setY(floorHeight),
+        dropPosition: base.clone().addScaledVector(normal, PERCH_DROP_OFFSET).setY(0),
+      });
+    }
+  }
+
+  /** マップの外や、落ちたアイテムを拾えない場所（小物の中）にしか落とせない立ち位置を除く */
+  private ValidatePerches(): void {
+    const limit = MAP_HALF_SIZE - 1.5;
+    const IsBlocked = (point: THREE.Vector3) => this.staticColliders.some((collider) => {
+      const box = collider.box;
+      return box.min.y < 2 && point.x > box.min.x - 0.45 && point.x < box.max.x + 0.45 && point.z > box.min.z - 0.45 && point.z < box.max.z + 0.45;
+    });
+    const IsFree = (point: THREE.Vector3) => this.IsWalkable(point.x, point.z) && !IsBlocked(point);
+    for (let i = this.perches.length - 1; i >= 0; i--) {
+      const perch = this.perches[i];
+      const isInMap = Math.abs(perch.position.x) < limit && Math.abs(perch.position.z) < limit;
+      // 真下に小物があるときは、近くの空いている地面に落とす
+      const drop = isInMap ? Level.FindNearbyPoint(perch.dropPosition, IsFree) : null;
+      if (drop) perch.dropPosition.copy(drop);
+      else this.perches.splice(i, 1);
+    }
+  }
+
+  /** point の近く（半径 1.6m 以内）で IsFree を満たす点を探す */
+  private static FindNearbyPoint(point: THREE.Vector3, IsFree: (point: THREE.Vector3) => boolean): THREE.Vector3 | null {
+    if (IsFree(point)) return point.clone();
+    for (const radius of [0.8, 1.6]) {
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const candidate = point.clone().add(new THREE.Vector3(Math.sin(angle) * radius, 0, Math.cos(angle) * radius));
+        if (IsFree(candidate)) return candidate;
+      }
+    }
+    return null;
+  }
+
   private BuildMainStreets(): void {
     ARMS.forEach((along, armIndex) => {
       const across = Level.GetAcross(along);
-      for (const placement of ARM_LAYOUTS[armIndex % ARM_LAYOUTS.length]) {
+      const layouts = STAGE_ARM_LAYOUTS[this.stageId];
+      for (const placement of layouts[armIndex % layouts.length]) {
         const position = Level.ArmToWorld(along, placement.x, placement.y);
         this.PlaceProp(placement, position, along, across.clone().multiplyScalar(-Math.sign(placement.x) || 1));
       }
 
-      // 街灯（マップ内の 1 本だけ本物の光源を持つ）
-      const lampSpots: [number, number][] = [[-4.6, 6.5], [4.6, 22.8], [-4.6, 36], [4.6, 48]];
-      lampSpots.forEach(([u, v], index) => {
+      // 街灯（マップ内の 1 本だけ本物の光源を持つ）。ビル街ではハロウィンのバナーを吊るす
+      LAMP_SPOTS.forEach(([u, v], index) => {
         const lamp = BuildStreetLamp();
         const position = Level.ArmToWorld(along, u, v);
         lamp.position.copy(position);
         lamp.rotation.y = Level.FacingRotation(across.clone().multiplyScalar(-Math.sign(u)));
         this.group.add(lamp);
+        if (this.isDowntown) {
+          const banner = BuildHalloweenBanner();
+          banner.position.copy(position);
+          banner.rotation.y = lamp.rotation.y;
+          this.group.add(banner);
+        }
         if (v < MAP_HALF_SIZE) this.AddColliderBox(position.x, position.z, 0.3, 0.3, 4.2);
         if (index === 0) {
           lamp.updateMatrixWorld(true);
@@ -472,12 +733,21 @@ export class Level {
         }
       });
 
+      if (this.isDowntown) {
+        // 通りの突き当たりの高層ビル（遠景）
+        const endTower = BuildOfficeTower(MAIN_HALF_WIDTH * 2 + 4, 40 + armIndex * 6, BUILDING_DEPTH, armIndex);
+        endTower.position.copy(along.clone().multiplyScalar(VISUAL_STREET_LENGTH));
+        endTower.rotation.y = Level.FacingRotation(along.clone().negate());
+        this.group.add(endTower);
+        return;
+      }
+
       // 電柱と電線
-      const poleDistances = [18.5, 28.5, 41, 54];
+      const poleDistances = POLE_DISTANCES;
       const poleSide = armIndex % 2 === 0 ? 1 : -1;
       const polePositions = poleDistances.map((v) => {
         const pole = BuildUtilityPole();
-        const position = Level.ArmToWorld(along, poleSide * 4.75, v);
+        const position = Level.ArmToWorld(along, poleSide * POLE_OFFSET, v);
         pole.position.copy(position);
         pole.rotation.y = Level.FacingRotation(along);
         this.group.add(pole);
@@ -514,7 +784,7 @@ export class Level {
   }
 
   private BuildQuadrants(): void {
-    for (const quadrant of QUADRANTS) {
+    for (const quadrant of this.quadrants) {
       for (const placement of QUADRANT_PROPS[quadrant.kind]) {
         const position = Level.QuadrantToWorld(quadrant, placement.x, placement.y);
         // 区画内の小物は x 軸方向を基準に置く
@@ -527,6 +797,8 @@ export class Level {
       if (quadrant.kind === 'alleys') this.DecorateAlleys(quadrant);
       if (quadrant.kind === 'park') this.DecoratePark(quadrant);
       if (quadrant.kind === 'parking') this.DecorateParking(quadrant);
+      if (quadrant.kind === 'offices') this.DecorateOffices(quadrant);
+      if (quadrant.kind === 'plaza') this.DecoratePlaza(quadrant);
 
       for (const spawn of QUADRANT_SPAWNS[quadrant.kind]) {
         this.spawns.push({
@@ -555,6 +827,25 @@ export class Level {
       this.lanterns.push(lantern);
     }
     this.AddPointLight(Q(15, 15, 3.8), 0xff8a50, 8);
+  }
+
+  /** オフィス街の裏通り：ハロウィンのガーランドと明かり */
+  private DecorateOffices(quadrant: Quadrant): void {
+    const Q = (a: number, b: number, y: number) => Level.QuadrantToWorld(quadrant, a, b).setY(y);
+    this.AddBuntingString(Q(13.6, 9, 5.2), Q(17.4, 9, 5.2), 0.3);
+    this.AddBuntingString(Q(9, 13.6, 5.4), Q(9, 17.4, 5.4), 0.3);
+    this.AddBuntingString(Q(12.6, 22, 5.3), Q(16.4, 22, 5.3), 0.3);
+    this.AddPointLight(Q(15, 15, 4.2), 0x9ab8ff, 8);
+  }
+
+  /** 広場：明るい色のタイルと明かり */
+  private DecoratePlaza(quadrant: Quadrant): void {
+    const Q = (a: number, b: number) => Level.QuadrantToWorld(quadrant, a, b);
+    const tiles = this.CreateGroundPlane(CreateSidewalkTexture(), 19, 19, 0, 0, 0.004, 0xc8c0b8);
+    const center = Q(11 + 19 / 2, 11 + 19 / 2);
+    tiles.position.set(center.x, 0.004, center.z);
+    this.group.add(tiles);
+    this.AddPointLight(Q(20, 20).setY(4), 0xffb070, 10);
   }
 
   /** 公園：神社（鳥居・社殿）と地面 */
@@ -625,9 +916,39 @@ export class Level {
       this.group.add(crates);
       this.AddColliderBox(x, z, 1.0, 1.0, 1.2);
     }
+    if (this.isDowntown) {
+      // 交差点の四隅の信号機（腕は通りの上へ伸びる）
+      ARMS.forEach((along) => {
+        const position = Level.ArmToWorld(along, -4.55, 4.55);
+        const light = BuildTrafficLight(3.2);
+        light.position.copy(position);
+        // 信号の正面（+Z）を通りの先へ向ける。腕（ローカル -X）は across 側＝通りの中央へ伸びる
+        light.rotation.y = Level.FacingRotation(along);
+        this.group.add(light);
+        this.AddColliderBox(position.x, position.z, 0.25, 0.25, 5.2);
+      });
+      return;
+    }
     const corner = MAIN_HALF_WIDTH - 0.1;
     this.AddBuntingString(new THREE.Vector3(-corner, 6.3, -corner), new THREE.Vector3(corner, 6.3, corner), 0.8);
     this.AddBuntingString(new THREE.Vector3(corner, 6.3, -corner), new THREE.Vector3(-corner, 6.3, corner), 0.8);
+  }
+
+  /** ビル街の車道の白線（中央線の破線と、交差点の横断歩道） */
+  private BuildRoadMarkings(): void {
+    const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xd8d4c8 });
+    const AddLine = (center: THREE.Vector3, along: THREE.Vector3, length: number, width: number) => {
+      const line = new THREE.Mesh(new THREE.PlaneGeometry(width, length), lineMaterial);
+      line.rotation.x = -Math.PI / 2;
+      line.rotation.z = Level.FacingRotation(along);
+      line.position.set(center.x, 0.012, center.z);
+      this.group.add(line);
+    };
+    for (const along of ARMS) {
+      for (let v = 9; v < VISUAL_STREET_LENGTH; v += 4) AddLine(Level.ArmToWorld(along, 0, v), along, 2, 0.14);
+      // 横断歩道（通りを横切る縞）
+      for (let u = -3.2; u <= 3.2; u += 0.8) AddLine(Level.ArmToWorld(along, u, 6.4), along, 2.2, 0.4);
+    }
   }
 
   /** マップの端：大通りは工事用バリケード、それ以外はブロック塀 */
@@ -795,6 +1116,16 @@ export class Level {
         object = BuildJackOLantern(1.3);
         object.rotation.y = Math.random() * Math.PI;
         break;
+      case 'cone':
+        object = BuildTrafficCone();
+        object.rotation.y = Math.random() * Math.PI;
+        break;
+      case 'fountain': {
+        const size = placement.size ?? 3;
+        object = BuildFountain(size, 1.1);
+        this.AddColliderBox(position.x, position.z, size, size, 1.1);
+        break;
+      }
       case 'barrel':
       case 'propane': {
         const barrel = new Barrel(position, placement.kind === 'propane');

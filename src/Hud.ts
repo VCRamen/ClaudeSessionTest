@@ -24,6 +24,7 @@ export class Hud {
   private readonly hitMarker = GetElement('hit-marker');
   private readonly damageVignette = GetElement('damage-vignette');
   private readonly scopeOverlay = GetElement('scope-overlay');
+  private readonly scopeZoom = GetElement('scope-zoom');
   private readonly pickupPrompt = GetElement('pickup-prompt');
   private readonly coverPrompt = GetElement('cover-prompt');
   private readonly banner = GetElement('banner');
@@ -95,8 +96,10 @@ export class Hud {
     this.crosshair.style.setProperty('--gap', `${Math.min(60, gap)}px`);
   }
 
-  SetScope(isVisible: boolean): void {
+  SetScope(isVisible: boolean, magnification: number): void {
     this.scopeOverlay.classList.toggle('hidden', !isVisible);
+    const zoomText = `×${magnification}`;
+    if (isVisible && this.scopeZoom.textContent !== zoomText) this.scopeZoom.textContent = zoomText;
     this.crosshair.classList.toggle('hidden', isVisible);
   }
 

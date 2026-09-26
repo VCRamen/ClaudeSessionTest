@@ -7,6 +7,8 @@ import type { Collider } from './Collision';
 const UNREACHABLE = 0x7fffffff;
 const CELL_SIZE = 1;
 const OBSTACLE_MARGIN = 0.55;
+/** これより高い位置に浮いている物（ベランダの床など）は、下を通れるので障害物にしない */
+const OVERHEAD_MIN_HEIGHT = 2.5;
 const NEIGHBOR_OFFSETS: [number, number][] = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
   [1, 1], [1, -1], [-1, 1], [-1, -1],
@@ -31,6 +33,7 @@ export class NavGrid {
     this.blocked.fill(0);
     for (const collider of colliders) {
       const box = collider.box;
+      if (box.min.y >= OVERHEAD_MIN_HEIGHT) continue;
       const minX = this.ToCellCoord(box.min.x - OBSTACLE_MARGIN);
       const maxX = this.ToCellCoord(box.max.x + OBSTACLE_MARGIN);
       const minZ = this.ToCellCoord(box.min.z - OBSTACLE_MARGIN);

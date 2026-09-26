@@ -85,6 +85,12 @@ export class Sfx {
     this.Tone(900, 1300, 0.1, 'sine', 0.2, 0.07);
   }
 
+  /** スコープの倍率を切り替えたときの「カチッ」という音 */
+  PlayScopeZoom(): void {
+    this.Noise(0.03, 4000, 0.2);
+    this.Tone(1400, 1100, 0.03, 'square', 0.05);
+  }
+
   PlayPowerUp(): void {
     this.Tone(523, 523, 0.1, 'square', 0.12);
     this.Tone(659, 659, 0.1, 'square', 0.12, 0.08);

@@ -12,7 +12,7 @@
     <div id="hud" class="hidden">
       <div id="crosshair"><span class="line top"></span><span class="line bottom"></span><span class="line left"></span><span class="line right"></span><span class="dot"></span></div>
       <div id="hit-marker" class="hidden"></div>
-      <div id="scope-overlay" class="hidden"><div class="scope-ring"></div></div>
+      <div id="scope-overlay" class="hidden"><div class="scope-ring"></div><div id="scope-zoom"></div><div class="scope-hint">ホイールで倍率変更</div></div>
       <div id="damage-vignette"></div>
       <div id="direction-indicators"></div>
       <canvas id="minimap" width="190" height="190"></canvas>
@@ -87,8 +87,8 @@
             <tr><td>Space</td><td>ジャンプ</td></tr>
             <tr><td>R</td><td>リロード</td></tr>
             <tr><td>Q</td><td>壁・遮蔽物に張り付く／離れる（張り付き中は A/D で移動、右クリックで身を乗り出す）</td></tr>
-            <tr><td>1〜4</td><td>武器切り替え ／ 落ちている武器の近くでは<b>そのスロットに登録</b></td></tr>
-            <tr><td>ホイール</td><td>隣の武器へ切り替え</td></tr>
+            <tr><td>1〜4</td><td>武器切り替え ／ 落ちている武器に少しの間触れていると<b>そのスロットに登録</b></td></tr>
+            <tr><td>ホイール</td><td>隣の武器へ切り替え ／ スコープ中は<b>倍率変更</b></td></tr>
             <tr><td>Esc</td><td>一時停止</td></tr>
           </table>
         </details>

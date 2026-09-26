@@ -28,7 +28,7 @@ npm run build      # tsc + vite build → dist/
 
 ## Git
 
-- 作業ブランチ：`claude/great-keller-119vyv`（まだ `main` にはマージしていない）
+- 作業ブランチ：`claude/ecstatic-noether-arz105`（`claude/great-keller-119vyv` の続き。どちらもまだ `main` にはマージしていない）
 - `.github/workflows/deploy-pages.yml`：`main` に push されると GitHub Pages へ公開する。公開には `main` へのマージと、リポジトリ設定で Pages の Source を「GitHub Actions」にすることが必要（まだ行っていない）。
 - コミットメッセージは英語で、変更点を箇条書きにしている。
 
@@ -44,8 +44,10 @@ npm run build      # tsc + vite build → dist/
 | `src/Weapons.ts` | 武器の定義（6 種類 × 機種 17 個）と `WeaponInstance`（弾数・レベル） |
 | `src/WeaponModels.ts` / `src/WeaponStats.ts` | 武器モデル／性能の数値表示（基礎値 + 強化値） |
 | `src/Enemy.ts` / `src/EnemyModels.ts` | 敵の定義・AI／モデル |
-| `src/Level.ts` | マップ（十字の大通り + 4 区画）の配置・当たり判定・出現口 |
+| `src/Level.ts` | マップ（十字の大通り + 4 区画）の配置・当たり判定・出現口・高所の敵の立ち位置（`perches`）。ステージごとに作り直す |
+| `src/Stages.ts` | ステージの定義（商店街・ビル街）と Wave → ステージの対応 |
 | `src/CityProps.ts` / `src/CityTextures.ts` | 店・街灯・車・鳥居などのモデル／看板などの Canvas テクスチャ |
+| `src/DowntownProps.ts` | ビル街のモデル（ベランダ付きマンション・高層ビル・遠景のビル群・信号機・バナー・コーン・噴水）とベランダ（商店街と共用） |
 | `src/SkySystem.ts` | 空・光・霧の時間帯（夕方 → 夜） |
 | `src/StaticBatcher.ts` | 動かない背景をマテリアルごとに結合してドローコールを減らす |
 | `src/NavGrid.ts` | 敵の経路探索（1m グリッドのフローフィールド） |
@@ -75,6 +77,17 @@ npm run build      # tsc + vite build → dist/
 - 背景は最後に `BatchStaticMeshes` で結合される。**動かすもの（提灯・ポータル・樽など）は `MarkDynamic` を付ける**。
 - 当たり判定を足したら NavGrid が自動で反映する（`nav.Rebuild`）。路地は幅 4m で、障害物の余白 0.55m を考えると 1.6m 以上の隙間を残すこと。
 
+### ステージ
+- 5 Wave（`WAVES_PER_STAGE`）で 1 ステージ。ステージの最後の Wave にボスが出る。次のステージへの切り替えは `Game.StartNextWave` → `ChangeStage` で、`Level` を `Dispose` して作り直し、`enemyContext` / `projectileContext` の `colliders`、NavGrid、ミニマップを差し替える。
+- `Level` はステージ ID を受け取り、区画の種類（`STAGE_QUADRANTS`）・大通りの小物（`STAGE_ARM_LAYOUTS`）・建物（`BuildShoppingFacade` / `BuildDowntownFacade`）・空の色（`SkySystem` の palette）を切り替える。
+- ビル街の区画 `offices` は路地（`alleys`）と同じブロック形状。`plaza` は大通りに大きく開いた広場。
+
+### 高所の敵（ベランダ）
+- ベランダは `Level.AddBalcony` で床の当たり判定（厚さ 0.2m の浮いた箱）と敵の立ち位置（`Perch`：足元の位置と、倒したときにアイテムが落ちる地面の位置）を登録する。立ち位置は床の高さ 8m 以下だけ。落ちる位置が小物の中なら近くの空いた地面へずらし、見つからなければ使わない（`ValidatePerches`）。
+- **NavGrid は高さ 2.5m 以上に浮いた箱を無視する**（ベランダの下を通れるように）。ビル街のベランダは街灯（高さ約 4.25m）より上（4.6m〜）に付ける。商店街のベランダ（3.9m）は街灯・電柱と重ならない位置だけに付ける（`CanAttachBalcony`）。
+- 高所の敵は `Enemy.perch` を持ち、移動せずにその場で撃つ（撃つ間隔は地上の 1.25 倍）。他の敵の押し合いの対象外。Wave 開始時に `Game.SpawnPerchedEnemies` で配置する（Wave 2 から、プレイヤーから 12〜38m、互いに 5m 以上離す）。
+- ドロップは `PickupManager.SpawnXxx(position, ..., fallFrom)` で高所から落とす。着地するまで拾えない（`PickupManager.IsLanded`）。
+
 ### 敵 AI とカバーの関係
 - Wave ごとに主な襲来方向（東西南北のどれか）を決め、その辺の出現口から出す。Wave 4 以降は約 2 割が横の辺から回り込む。
 - 敵は見えている間は持ち場を守る。射程内で見失ったら 2〜3.5 秒待ち、「回り込み役」の枠（同時に 1〜3 体）を得た敵だけが回り込む。回り込み役は倒されるまで役を持ち続ける。
@@ -86,6 +99,8 @@ npm run build      # tsc + vite build → dist/
 
 ### 武器
 - 強化ボーナス（触れるだけで強化 + 弾薬全回復）は**全く同じ機種**のときだけ。
+- 落ちている武器は、触れて `WEAPON_PICKUP_DELAY`（0.7 秒）たってから 1〜4 キーで登録できる（それまでは 1〜4 は武器切り替え）。触れている武器が変わると数え直す。
+- スナイパーのスコープ倍率は `WeaponInstance.scopeMagnification`（初期 ×2）。スコープ中はホイールで `SCOPE_MAGNIFICATIONS` の中から機種ごとの上限（`maxScopeMagnification`）まで切り替える。視野角は倍率から計算し（`Game.GetAimFov`）、視点感度も倍率に応じて下げる（`Player.aimSensitivityScale`）。
 - レベル効果：威力 +20%／装弾数 +15%／予備弾 +15%／リロード -8%／射撃間隔 -4%（1 レベルごと、最大 Lv5）。
 
 ## テスト方法（ヘッドレスブラウザ）
@@ -100,10 +115,14 @@ npm run build      # tsc + vite build → dist/
 - VRM のテスト用サンプル（VRM 1.0）：`https://raw.githubusercontent.com/pixiv/three-vrm/dev/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm`。VRM 0.x のサンプルは入手できていない。
 - 日本語フォントは IPA ゴシックなどがあるので、看板のテキストも確認できる。
 - 確認してきた流れ：撃破・武器の登録と入れ替え・強化ボーナス・爆発樽・Wave クリア → ショップ → 次の Wave・ゲームオーバー → リトライ・全 Wave クリア → エンドレス・張り付き（低い遮蔽物／高い壁の角／行き止まり）・敵の経路。
+- 追加で確認した流れ：武器登録の待ち時間（触れた直後は 1〜4 が武器切り替えになる）・スコープ倍率の切り替え・Wave 5 のボス撃破 → STAGE CLEAR → ショップ → ビル街・ビル街での敵の経路・高所の敵の配置と撃破 → ドロップの落下・ゲームオーバー → リトライで商店街に戻る・タイトルへ戻る。ステージを何度切り替えてもシーンのオブジェクト数は増えない。
+- ステージを直接確認するには `game.wave = 5; game.StartNextWave();`（ビル街の Wave 6 が始まる）。
 
 ## 今後の候補
 
-- オープンワールド（自由探索）モード：Wave 制を残して別モードとして追加する案。目的（結界の破壊・区画の解放など）、敵の出方、マップの広さ、ショップの置き場所を決める必要がある。
+- オープンワールド（自由探索）モード：Wave 制を残して別モードとして追加する案。目的（結界の破壊・区画の解放など）、敵の出方、マップの広さ、ショップの置き場所を決める必要がある。ビル街のステージ（`Level` の `downtown`）はその下地にも使える。
+- ステージ進行は仮（ボスを倒すと次へ）。ステージ選択、ステージごとのボス、3 つ目以降のステージ。
+- 高所の敵の種類を増やす（魔女など）。ベランダ以外の高所（屋上・歩道橋）。
 - カバーの拡張：遮蔽物の乗り越え、隣の遮蔽物への移動、ブラインドファイア、張り付き中のリロードモーション。
 - 構えていないときに銃を下げる（ローレディ）。
 - 敵の追加（スケルトン、カボチャ頭の大型の敵）、HUD デザインの調整、ブルーム、BGM、設定画面（感度・音量・画質）。

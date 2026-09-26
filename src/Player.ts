@@ -45,6 +45,8 @@ export class Player {
   reloadDuration = 0;
   spreadBloom = 0;
   recoilKick = 0;
+  /** エイム中の視点感度の倍率（スコープの倍率が高いほど小さくする） */
+  aimSensitivityScale = AIM_SENSITIVITY_MULTIPLIER;
 
   /** 張り付いている壁（張り付いていなければ null） */
   cover: CoverSpot | null = null;
@@ -245,7 +247,7 @@ export class Player {
   /** 視点操作と移動 */
   UpdateMovement(dt: number, input: Input, colliders: Collider[]): void {
     this.isAiming = input.isRightDown;
-    const sensitivity = MOUSE_SENSITIVITY * (this.isAiming ? AIM_SENSITIVITY_MULTIPLIER : 1);
+    const sensitivity = MOUSE_SENSITIVITY * (this.isAiming ? this.aimSensitivityScale : 1);
     this.yaw -= input.mouseDeltaX * sensitivity;
     this.pitch = Clamp(this.pitch - input.mouseDeltaY * sensitivity, PITCH_MIN, PITCH_MAX);
 

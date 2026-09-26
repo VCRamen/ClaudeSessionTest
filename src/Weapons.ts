@@ -1,6 +1,6 @@
 // 武器の定義とインスタンス（弾数・強化レベル）
 
-import { MAX_WEAPON_LEVEL } from './Config';
+import { MAX_WEAPON_LEVEL, SCOPE_DEFAULT_MAGNIFICATION } from './Config';
 
 /** 武器の種類（モデル・効果音・スコープの有無などに使う） */
 export type WeaponType = 'handgun' | 'smg' | 'shotgun' | 'rifle' | 'sniper' | 'launcher';
@@ -46,6 +46,8 @@ export interface WeaponDef {
   projectileGravity: number;
   explosionRadius: number;
   aimFov: number;
+  /** スコープの最大倍率（スナイパーのみ。ホイールでここまで拡大できる） */
+  maxScopeMagnification: number;
   recoil: number;
   /** モデルのアクセント色 */
   color: number;
@@ -67,7 +69,7 @@ function Define(spec: WeaponSpec): WeaponDef {
   return {
     pellets: 1, spread: 0.02, aimSpreadMultiplier: 0.5, isAuto: false, burstCount: 1, burstInterval: 0,
     range: 80, falloffStart: 30, pierce: 1, isProjectile: false, projectileSpeed: 0, projectileGravity: 0,
-    explosionRadius: 0, aimFov: 55, recoil: 0.01, color: 0x777788,
+    explosionRadius: 0, aimFov: 55, maxScopeMagnification: 6, recoil: 0.01, color: 0x777788,
     ...TYPE_DEFAULTS[spec.type],
     ...spec,
   };
@@ -134,11 +136,11 @@ export const WEAPON_DEFS: Record<WeaponId, WeaponDef> = {
   }),
   dmr: Define({
     id: 'dmr', type: 'sniper', name: 'マークスマンライフル', description: '連射できる半自動狙撃銃。貫通なし', tier: 2,
-    damage: 65, fireInterval: 0.3, magSize: 10, maxReserve: 60, reloadTime: 2.2, pierce: 1, aimFov: 30, recoil: 0.03, color: 0x7a8a50,
+    damage: 65, fireInterval: 0.3, magSize: 10, maxReserve: 60, reloadTime: 2.2, pierce: 1, aimFov: 30, maxScopeMagnification: 4, recoil: 0.03, color: 0x7a8a50,
   }),
   antiMateriel: Define({
     id: 'antiMateriel', type: 'sniper', name: '対物ライフル', description: '壁以外すべてを貫く超火力。3 発のみ', tier: 3,
-    damage: 320, fireInterval: 1.8, magSize: 3, maxReserve: 15, reloadTime: 3.2, pierce: 8, aimFov: 16, recoil: 0.12, color: 0x3a3a3a,
+    damage: 320, fireInterval: 1.8, magSize: 3, maxReserve: 15, reloadTime: 3.2, pierce: 8, aimFov: 16, maxScopeMagnification: 8, recoil: 0.12, color: 0x3a3a3a,
   }),
   // ---- ランチャー ----
   rocket: Define({
@@ -186,6 +188,8 @@ export class WeaponInstance {
   level: number;
   mag: number;
   reserve: number;
+  /** スコープの倍率（スナイパーのみ使う。持ち替えても覚えておく） */
+  scopeMagnification = SCOPE_DEFAULT_MAGNIFICATION;
 
   constructor(id: WeaponId, level = 1) {
     this.def = WEAPON_DEFS[id];

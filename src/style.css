@@ -140,6 +140,25 @@ body {
     linear-gradient(rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.8)) center / 100% 1px no-repeat;
 }
 
+#scope-zoom {
+  position: absolute;
+  left: calc(50% + 20vmin);
+  top: calc(50% + 20vmin);
+  font-size: 20px;
+  font-weight: 700;
+  color: #9dff9d;
+  text-shadow: 0 0 4px #000;
+}
+
+#scope-overlay .scope-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 8vh;
+  transform: translateX(-50%);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
 #damage-vignette {
   position: absolute;
   inset: 0;
@@ -190,6 +209,30 @@ body {
   font-size: 14px;
   font-weight: 800;
   color: #ffb13d;
+}
+
+/* 高所（ベランダ）の敵の方向 */
+.indicator.perch {
+  left: -135px;
+  top: -135px;
+  width: 270px;
+  height: 270px;
+  border-top-color: rgba(255, 90, 208, 0.85);
+  border-width: 5px;
+  filter: drop-shadow(0 0 5px rgba(255, 60, 200, 0.8));
+}
+
+.indicator.perch::after {
+  content: '▲ 高所';
+  position: absolute;
+  left: 50%;
+  top: -26px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
+  color: #ff8ae0;
+  text-shadow: 0 0 4px #000;
 }
 
 #minimap {
@@ -403,6 +446,25 @@ body {
 
 #cover-prompt b {
   color: var(--accent);
+}
+
+.pickup-wait {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pickup-progress {
+  width: 160px;
+  height: 5px;
+  margin: 3px auto 0;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.pickup-progress > div {
+  height: 100%;
+  background: var(--accent);
 }
 
 .pickup-desc {

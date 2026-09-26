@@ -20,13 +20,18 @@ export interface MinimapMarker {
 export class Minimap {
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
-  private readonly staticLayer: HTMLCanvasElement;
+  private staticLayer: HTMLCanvasElement;
   private readonly radius: number;
 
   constructor(canvas: HTMLCanvasElement, blocks: Rect[]) {
     this.canvas = canvas;
     this.context = canvas.getContext('2d')!;
     this.radius = canvas.width / 2 - 3;
+    this.staticLayer = Minimap.DrawStaticLayer(blocks);
+  }
+
+  /** ステージが変わったときに地図を描き直す */
+  SetBlocks(blocks: Rect[]): void {
     this.staticLayer = Minimap.DrawStaticLayer(blocks);
   }
 

@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import {
   CAMERA_AIM_DISTANCE, CAMERA_DISTANCE, CAMERA_FOV, CAMERA_SHOULDER_OFFSET, HEALTH_PICKUP_AMOUNT,
-  MAP_HALF_SIZE, MAX_ALIVE_ENEMIES, PICKUP_RANGE, PLAYER_HIT_RADIUS, TOTAL_WAVES, WALK_SPEED,
+  AIM_SENSITIVITY_MULTIPLIER, MAP_HALF_SIZE, MAX_ALIVE_ENEMIES, PICKUP_RANGE, PLAYER_HIT_RADIUS, SCOPE_MAGNIFICATIONS,
+  TOTAL_WAVES, WALK_SPEED, WAVES_PER_STAGE, WEAPON_PICKUP_DELAY,
 } from './Config';
 import { Input } from './Input';
 import { Sfx } from './Audio';
@@ -29,6 +30,8 @@ import type { ColliderHit } from './Collision';
 import { PickRandomDropWeapon } from './Weapons';
 import type { WeaponId, WeaponInstance } from './Weapons';
 import type { Barrel } from './Barrel';
+import type { Perch } from './Level';
+import { GetStageIndexForWave, GetWaveInStage, STAGES } from './Stages';
 
 type GameState = 'title' | 'playing' | 'paused' | 'shop' | 'result';
 type DropSource = 'enemy' | 'barrel';
@@ -81,8 +84,15 @@ const FLANK_SPAWN_START_WAVE = 4;
 const FLANK_SPAWN_RATIO = 0.2;
 const DAMAGE_INDICATOR_TIME = 1.2;
 const THREAT_INDICATOR_TIME = 5;
+/** 高所の敵が出てくる最初の Wave と、同時に陣取る最大数 */
+const PERCH_START_WAVE = 2;
+const MAX_PERCHED_ENEMIES = 5;
+/** 高所の敵の出現位置：プレイヤーからの水平距離の範囲と、敵同士の最小の間隔 */
+const PERCH_MIN_DISTANCE = 12;
+const PERCH_MAX_DISTANCE = 38;
+const PERCH_MIN_SPACING = 5;
 
-type IndicatorKind = 'damage' | 'threat';
+type IndicatorKind = 'damage' | 'threat' | 'perch';
 
 interface DirectionIndicator {
   source: THREE.Vector3;
@@ -104,7 +114,8 @@ export class Game {
   private readonly sfx = new Sfx();
   private readonly hud = new Hud();
   private readonly shop: Shop;
-  private readonly level: Level;
+  private level: Level;
+  private stageIndex = 0;
   private readonly nav = new NavGrid();
   private readonly effects: Effects;
   private readonly projectiles: ProjectileSystem;
@@ -134,6 +145,9 @@ export class Game {
   private burstWeapon: WeaponInstance | null = null;
   private burstRemaining = 0;
   private burstTimer = 0;
+  /** いま触れている武器ピックアップと、触れ続けている時間 */
+  private contactPickup: Pickup | null = null;
+  private contactTime = 0;
   private titleAngle = 0;
   /** カメラを右肩（+1）／左肩（-1）のどちらに置くか（なめらかに切り替える） */
   private cameraShoulderSide = 1;
@@ -162,7 +176,7 @@ export class Game {
     this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.05, 300);
     this.camera.rotation.order = 'YXZ';
     this.input = new Input(canvas);
-    this.level = new Level(this.scene);
+    this.level = new Level(this.scene, STAGES[0].id);
     this.nav.Rebuild(this.level.colliders);
     this.effects = new Effects(this.scene);
     this.projectiles = new ProjectileSystem(this.scene);
@@ -360,6 +374,7 @@ export class Game {
 
   private StartGame(): void {
     this.sfx.Unlock();
+    this.ChangeStage(0);
     this.ClearField();
     for (const id of ['title-screen', 'result-screen', 'pause-screen']) {
       document.getElementById(id)!.classList.add('hidden');
@@ -391,8 +406,33 @@ export class Game {
     this.nav.Rebuild(this.level.colliders);
   }
 
+  /**
+   * ステージを切り替える（建物・当たり判定・経路・ミニマップを作り直す）。
+   * 同じステージなら何もしない。切り替えたら true
+   */
+  private ChangeStage(index: number): boolean {
+    if (index === this.stageIndex) return false;
+    this.ClearField();
+    this.level.Dispose();
+    this.stageIndex = index;
+    this.level = new Level(this.scene, STAGES[index].id);
+    this.enemyContext.colliders = this.level.colliders;
+    this.projectileContext.colliders = this.level.colliders;
+    this.nav.Rebuild(this.level.colliders);
+    this.navTimer = 0;
+    this.minimap.SetBlocks(this.level.blocks);
+    this.player.position.copy(this.level.playerStart);
+    this.player.velocity.set(0, 0, 0);
+    this.player.cover = null;
+    this.player.isPoppedOut = false;
+    this.contactPickup = null;
+    return true;
+  }
+
   private StartNextWave(): void {
     this.wave++;
+    // ボスを倒すと次のステージへ（ステージの最初の Wave で切り替える）
+    const isNewStage = this.ChangeStage(GetStageIndexForWave(this.wave)) || this.wave === 1;
     this.spawnQueue = BuildWaveComposition(this.wave);
     this.spawnTimer = 1.5;
     this.isWaveActive = true;
@@ -401,15 +441,53 @@ export class Game {
     this.nav.Rebuild(this.level.colliders);
     this.state = 'playing';
     this.ChooseSpawnSides();
-    // Wave が進むごとに日が暮れて夜になる（エンドレスは夜のまま）
-    this.level.SetTimeOfDay((this.wave - 1) / (TOTAL_WAVES - 1), this.wave === 1);
+    // ステージ内で Wave が進むごとに日が暮れて夜になる
+    this.level.SetTimeOfDay(GetWaveInStage(this.wave) / (WAVES_PER_STAGE - 1), isNewStage);
+    const perchedCount = this.SpawnPerchedEnemies();
 
+    const stage = STAGES[this.stageIndex];
     const hasBoss = this.spawnQueue.includes('boss');
-    let subtitle = `${this.spawnQueue.length} 体のモンスターが襲来！`;
+    let subtitle = `${this.spawnQueue.length + perchedCount} 体のモンスターが襲来！`;
     if (hasBoss) subtitle = '👑 パンプキンキング出現！';
     else if (this.wave === TOTAL_WAVES) subtitle = '最終 Wave';
-    this.hud.ShowBanner(`WAVE ${this.wave}`, subtitle);
+    if (perchedCount > 0) subtitle += `　⚠ 高所に ${perchedCount} 体`;
+    if (isNewStage) {
+      this.hud.ShowBanner(`STAGE ${this.stageIndex + 1}`, `${stage.name}　WAVE ${this.wave}：${subtitle}`, 4);
+      this.hud.Notify(`${stage.name}：${stage.description}`, 'bonus');
+    } else {
+      this.hud.ShowBanner(`WAVE ${this.wave}`, subtitle);
+    }
     this.sfx.PlayWaveStart();
+  }
+
+  /** Wave の開始時に、ベランダなどの高所に敵を配置する。配置した数を返す */
+  private SpawnPerchedEnemies(): number {
+    if (this.wave < PERCH_START_WAVE) return 0;
+    const bonus = STAGES[this.stageIndex].id === 'downtown' ? 1 : 0;
+    const count = Math.min(MAX_PERCHED_ENEMIES, Math.floor(this.wave / 2) + bonus);
+    const player = this.player.position;
+    // 主な襲来方向の側を優先しつつ、ばらつかせる
+    const candidates = this.level.perches
+      .map((perch) => {
+        const distance = Math.hypot(perch.position.x - player.x, perch.position.z - player.z);
+        const sideScore = (perch.position.x * this.primarySide.x + perch.position.z * this.primarySide.z) / MAP_HALF_SIZE;
+        return { perch, distance, score: Math.random() + sideScore * 0.6 };
+      })
+      .filter((entry) => entry.distance >= PERCH_MIN_DISTANCE && entry.distance <= PERCH_MAX_DISTANCE)
+      .sort((a, b) => b.score - a.score);
+    const chosen: Perch[] = [];
+    for (const { perch } of candidates) {
+      if (chosen.length >= count) break;
+      if (chosen.some((other) => other.position.distanceTo(perch.position) < PERCH_MIN_SPACING)) continue;
+      chosen.push(perch);
+    }
+    for (const perch of chosen) {
+      const enemy = this.AddEnemy('pumpkin', perch.position, perch);
+      enemy.GetCenter(tmpCenter);
+      this.effects.SpawnBurst(tmpCenter.clone(), 0x9b30ff, 25, 3);
+      this.indicators.push({ source: perch.position.clone(), timer: THREAT_INDICATOR_TIME, duration: THREAT_INDICATOR_TIME, kind: 'perch' });
+    }
+    return chosen.length;
   }
 
   /** この Wave の主な襲来方向（プレイヤーから遠い側）と、回り込み部隊の方向を決める */
@@ -432,7 +510,11 @@ export class Game {
     const bonus = 50 + this.wave * 10;
     this.player.money += bonus;
     const isFinal = this.wave === TOTAL_WAVES && !this.isEndless;
-    this.hud.ShowBanner('WAVE CLEAR', `ボーナス +$${bonus}　${isFinal ? '' : 'まもなくショップが開きます'}`, WAVE_CLEAR_DELAY);
+    const isStageEnd = GetStageIndexForWave(this.wave + 1) !== this.stageIndex;
+    let next = 'まもなくショップが開きます';
+    if (isFinal) next = '';
+    else if (isStageEnd) next = `ショップの後、次のステージ「${STAGES[GetStageIndexForWave(this.wave + 1)].name}」へ`;
+    this.hud.ShowBanner(isStageEnd && !isFinal ? 'STAGE CLEAR' : 'WAVE CLEAR', `ボーナス +$${bonus}　${next}`, WAVE_CLEAR_DELAY);
     this.sfx.PlayWaveClear();
   }
 
@@ -455,6 +537,7 @@ export class Game {
     const minutes = Math.floor(this.playTime / 60);
     const seconds = Math.floor(this.playTime % 60).toString().padStart(2, '0');
     document.getElementById('result-stats')!.innerHTML = `
+      <div><span>到達ステージ</span><strong>${this.stageIndex + 1}　${STAGES[this.stageIndex].name}</strong></div>
       <div><span>到達 Wave</span><strong>${this.wave}</strong></div>
       <div><span>撃破数</span><strong>${this.kills}</strong></div>
       <div><span>所持金</span><strong>$ ${this.player.money}</strong></div>
@@ -466,6 +549,7 @@ export class Game {
 
   private ReturnToTitle(): void {
     this.state = 'title';
+    this.ChangeStage(0);
     this.level.SetTimeOfDay(0, true);
     this.input.ExitLock();
     this.ClearField();
@@ -526,6 +610,11 @@ export class Game {
     this.playTime += dt;
     const player = this.player;
 
+    // スコープの倍率が高いほど視点をゆっくり動かす
+    const heldWeapon = player.GetCurrentWeapon();
+    player.aimSensitivityScale = heldWeapon?.def.type === 'sniper'
+      ? Math.min(AIM_SENSITIVITY_MULTIPLIER, 1.6 / heldWeapon.scopeMagnification)
+      : AIM_SENSITIVITY_MULTIPLIER;
     player.UpdateMovement(dt, this.input, this.level.colliders);
     player.GetTargetPosition(this.playerTarget);
     // 当たり判定の上端がちょうど身長になるカプセル（しゃがめば低い遮蔽物の陰に収まる）
@@ -533,7 +622,7 @@ export class Game {
     this.playerSegmentTop.set(player.position.x, player.position.y + player.GetHeight() - PLAYER_HIT_RADIUS, player.position.z);
 
     this.fireBufferTimer = this.input.isLeftPressed ? FIRE_BUFFER_TIME : Math.max(0, this.fireBufferTimer - dt);
-    this.HandleWeaponInput();
+    this.HandleWeaponInput(dt);
     this.UpdateBurst(dt);
     if (player.UpdateTimers(dt)) this.sfx.PlayReload();
     const weapon = player.GetCurrentWeapon();
@@ -579,38 +668,59 @@ export class Game {
   // 武器
   // ------------------------------------------------------------
 
-  private HandleWeaponInput(): void {
+  private HandleWeaponInput(dt: number): void {
     const player = this.player;
     const input = this.input;
     const slotKey = input.GetPressedSlotKey();
     // 所持している武器と同じものは触れるだけで拾う（強化ボーナス）ので、登録の対象外
     const nearby = this.pickups.FindNearestWeapon(player.position, PICKUP_RANGE, (pickup) => this.IsBonusPickup(pickup));
+    // 触れてすぐは登録できない（通りすがりに 1〜4 で武器を持ち替えたときに誤って拾わないように）
+    if (nearby !== this.contactPickup) {
+      this.contactPickup = nearby;
+      this.contactTime = 0;
+    } else if (nearby) {
+      this.contactTime += dt;
+    }
+    const canRegister = nearby !== null && this.contactTime >= WEAPON_PICKUP_DELAY;
 
     if (nearby && nearby.weapon) {
       const color = TIER_CSS_COLORS[Math.min(nearby.weapon.def.tier, TIER_CSS_COLORS.length - 1)];
+      const progress = Math.min(1, this.contactTime / WEAPON_PICKUP_DELAY);
       this.hud.SetPickupPrompt(
         `<span class="pickup-name" style="color:${color}">${nearby.weapon.GetDisplayName()}</span>`
         + `<div class="pickup-desc">${nearby.weapon.def.description}</div>`
         + FormatWeaponStatsHtml(nearby.weapon)
-        + `<b>[1]〜[4]</b> キーでスロットに登録`,
+        + (canRegister
+          ? '<b>[1]〜[4]</b> キーでスロットに登録'
+          : `<div class="pickup-wait">登録の準備中…<div class="pickup-progress"><div style="width:${(progress * 100).toFixed(0)}%"></div></div></div>`),
       );
-      if (slotKey >= 0) {
-        const weapon = nearby.weapon;
-        const dropPosition = nearby.position.clone();
-        this.pickups.Remove(nearby);
-        const previous = player.AssignWeapon(slotKey, weapon);
-        if (previous) this.pickups.SpawnWeapon(dropPosition, previous);
-        player.SwitchToSlot(slotKey);
-        this.hud.SetPickupPrompt(null);
-        this.hud.Notify(`${weapon.GetDisplayName()} をスロット ${slotKey + 1} に登録`, 'pickup');
-        this.sfx.PlayPickup();
-      }
     } else {
       this.hud.SetPickupPrompt(null);
-      if (slotKey >= 0) player.SwitchToSlot(slotKey);
     }
 
-    if (input.wheelSteps !== 0) player.CycleWeapon(Math.sign(input.wheelSteps));
+    if (canRegister && nearby.weapon && slotKey >= 0) {
+      const weapon = nearby.weapon;
+      const dropPosition = nearby.position.clone();
+      this.pickups.Remove(nearby);
+      const previous = player.AssignWeapon(slotKey, weapon);
+      if (previous) this.pickups.SpawnWeapon(dropPosition, previous);
+      player.SwitchToSlot(slotKey);
+      this.hud.SetPickupPrompt(null);
+      this.hud.Notify(`${weapon.GetDisplayName()} をスロット ${slotKey + 1} に登録`, 'pickup');
+      this.sfx.PlayPickup();
+      // 置いた武器をすぐ拾い直さないよう、触れた時間を数え直す
+      this.contactPickup = null;
+      this.contactTime = 0;
+    } else if (slotKey >= 0) {
+      player.SwitchToSlot(slotKey);
+    }
+
+    // スコープを覗いている間、ホイールは倍率の変更（上で拡大、下で縮小）
+    if (input.wheelSteps !== 0) {
+      const current = player.GetCurrentWeapon();
+      if (current && this.IsScoped()) this.ChangeScopeMagnification(current, -Math.sign(input.wheelSteps));
+      else player.CycleWeapon(Math.sign(input.wheelSteps));
+    }
     if (input.WasPressed('KeyR') && player.StartReload()) this.sfx.PlayReload();
 
     const weapon = player.GetCurrentWeapon();
@@ -623,6 +733,24 @@ export class Game {
     } else if (!player.StartReload()) {
       this.sfx.PlayEmpty();
     }
+  }
+
+  /** スコープの倍率を 1 段階上げる（direction = 1）／下げる（-1） */
+  private ChangeScopeMagnification(weapon: WeaponInstance, direction: number): void {
+    const levels = SCOPE_MAGNIFICATIONS.filter((value) => value <= weapon.def.maxScopeMagnification);
+    let index = levels.findIndex((value) => value >= weapon.scopeMagnification);
+    if (index < 0) index = levels.length - 1;
+    const next = Math.max(0, Math.min(levels.length - 1, index + direction));
+    if (levels[next] === weapon.scopeMagnification) return;
+    weapon.scopeMagnification = levels[next];
+    this.sfx.PlayScopeZoom();
+  }
+
+  /** エイム中の視野角。スナイパーはスコープの倍率から求める */
+  private GetAimFov(weapon: WeaponInstance): number {
+    if (weapon.def.type !== 'sniper') return weapon.def.aimFov;
+    const halfTan = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV / 2)) / weapon.scopeMagnification;
+    return THREE.MathUtils.radToDeg(Math.atan(halfTan) * 2);
   }
 
   private GetCurrentSpread(weapon: WeaponInstance): number {
@@ -807,21 +935,25 @@ export class Game {
       this.pickups.SpawnHealth(enemy.position.clone().add(new THREE.Vector3(-1, 0, 0)));
       this.pickups.SpawnAmmo(enemy.position.clone().add(new THREE.Vector3(0, 0, 1)));
       this.hud.ShowBanner('BOSS DEFEATED', `パンプキンキングを倒した！ +$${reward}`, 2.5);
+    } else if (enemy.perch) {
+      // 高所の敵のドロップは、ベランダから下の地面へ落ちてくる
+      this.RollDrops(enemy.perch.dropPosition, 'enemy', tmpCenter.clone());
     } else {
       this.RollDrops(enemy.position, 'enemy');
     }
   }
 
-  private RollDrops(position: THREE.Vector3, source: DropSource): void {
+  /** fallFrom を渡すと、その高さからアイテムが落ちてくる */
+  private RollDrops(position: THREE.Vector3, source: DropSource, fallFrom: THREE.Vector3 | null = null): void {
     const chances = DROP_CHANCES[source];
     const dropPosition = position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.6, 0, (Math.random() - 0.5) * 0.6));
     const roll = Math.random();
     if (roll < chances.weapon) {
-      this.pickups.SpawnWeapon(dropPosition, PickRandomDropWeapon(this.wave));
+      this.pickups.SpawnWeapon(dropPosition, PickRandomDropWeapon(this.wave), fallFrom);
     } else if (roll < chances.weapon + chances.health) {
-      this.pickups.SpawnHealth(dropPosition);
+      this.pickups.SpawnHealth(dropPosition, fallFrom);
     } else if (roll < chances.weapon + chances.health + chances.ammo) {
-      this.pickups.SpawnAmmo(dropPosition);
+      this.pickups.SpawnAmmo(dropPosition, fallFrom);
     }
   }
 
@@ -968,10 +1100,11 @@ export class Game {
     this.effects.SpawnBurst(new THREE.Vector3(position.x, 0.5, position.z), 0x9b30ff, 25, 3);
   }
 
-  private AddEnemy(kind: EnemyKind, position: THREE.Vector3): void {
-    const enemy = new Enemy(kind, position, this.wave);
+  private AddEnemy(kind: EnemyKind, position: THREE.Vector3, perch: Perch | null = null): Enemy {
+    const enemy = new Enemy(kind, position, this.wave, perch);
     this.scene.add(enemy.mesh, enemy.healthBar);
     this.enemies.push(enemy);
+    return enemy;
   }
 
   /** 所持している武器と同じ種類の武器ピックアップか */
@@ -1003,6 +1136,7 @@ export class Game {
     this.pickups.Update(dt, (pickup) => this.IsBonusPickup(pickup));
     const player = this.player;
     for (const pickup of [...this.pickups.pickups]) {
+      if (!PickupManager.IsLanded(pickup)) continue;
       const distance = Math.hypot(pickup.position.x - player.position.x, pickup.position.z - player.position.z);
       if (distance > 1.0) continue;
       if (pickup.kind === 'weapon') {
@@ -1062,7 +1196,7 @@ export class Game {
     const isScoped = this.IsScoped();
     const blend = 1 - Math.exp(-dt * 14);
 
-    const targetFov = player.isAiming && weapon ? weapon.def.aimFov : CAMERA_FOV;
+    const targetFov = player.isAiming && weapon ? this.GetAimFov(weapon) : CAMERA_FOV;
     this.currentFov += (targetFov - this.currentFov) * blend;
     this.camera.fov = this.currentFov;
     this.camera.updateProjectionMatrix();
@@ -1137,7 +1271,9 @@ export class Game {
     }
     for (const enemy of this.enemies) {
       const isBoss = enemy.def.kind === 'boss';
-      markers.push({ x: enemy.position.x, z: enemy.position.z, color: isBoss ? '#ff9a1f' : '#ff3b4a', size: isBoss ? 6 : 3.5, isClampedToEdge: true });
+      // 高所の敵はピンクで表示する
+      const color = isBoss ? '#ff9a1f' : enemy.perch ? '#ff5ad0' : '#ff3b4a';
+      markers.push({ x: enemy.position.x, z: enemy.position.z, color, size: isBoss ? 6 : enemy.perch ? 4.2 : 3.5, isClampedToEdge: true });
     }
     this.minimap.Draw(this.player.position.x, this.player.position.z, this.player.yaw, markers);
   }
@@ -1147,13 +1283,14 @@ export class Game {
     const weapon = player.GetCurrentWeapon();
     this.hud.UpdatePlayer(player, weapon ? this.GetCurrentSpread(weapon) : 0);
     const isEndlessWave = this.isEndless || this.wave > TOTAL_WAVES;
+    const stageName = `STAGE ${this.stageIndex + 1} ${STAGES[this.stageIndex].name}`;
     this.hud.SetWave(
-      isEndlessWave ? `WAVE ${this.wave}  ENDLESS` : `WAVE ${this.wave} / ${TOTAL_WAVES}`,
+      isEndlessWave ? `${stageName}　WAVE ${this.wave}  ENDLESS` : `${stageName}　WAVE ${this.wave} / ${TOTAL_WAVES}`,
       this.spawnQueue.length + this.enemies.length,
     );
     const boss = this.enemies.find((enemy) => enemy.def.kind === 'boss');
     this.hud.SetBoss(boss ? boss.def.name : null, boss ? boss.hp / boss.maxHp : 0);
-    this.hud.SetScope(this.IsScoped());
+    this.hud.SetScope(this.IsScoped(), weapon ? weapon.scopeMagnification : 1);
     this.hud.Update(dt, player.hp / player.maxHp);
   }
 }

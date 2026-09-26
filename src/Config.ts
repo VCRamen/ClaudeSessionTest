@@ -34,3 +34,14 @@ export const MAX_WEAPON_LEVEL = 5;
 
 export const HEALTH_PICKUP_AMOUNT = 35;
 export const PICKUP_LIFETIME = 90;
+
+/** 落ちている武器に触れてから、1〜4 キーで登録できるようになるまでの時間（秒） */
+export const WEAPON_PICKUP_DELAY = 0.7;
+
+/** スコープの倍率の候補（ホイールで切り替える） */
+export const SCOPE_MAGNIFICATIONS = [1.5, 2, 3, 4, 6, 8];
+/** スコープを初めて覗いたときの倍率 */
+export const SCOPE_DEFAULT_MAGNIFICATION = 2;
+
+/** 1 つのステージで戦う Wave の数（最後の Wave でボスが出る） */
+export const WAVES_PER_STAGE = 5;
